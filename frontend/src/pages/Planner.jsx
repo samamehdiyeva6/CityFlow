@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Search, MapPin, Clock, Info, ChevronRight, Award, Zap, AlertTriangle } from 'lucide-react';
+import { Search, MapPin, Clock, Info, Zap, AlertTriangle, Train } from 'lucide-react';
 
 const API_BASE_URL = "http://127.0.0.1:8000";
 
@@ -43,11 +43,25 @@ const Planner = () => {
     }
   };
 
+  const getRouteMeta = (route) => {
+    const typeText = String(route.type || '').toLowerCase();
+    const idText = String(route.id || '');
+    const isMetro = typeText.includes('metro') || idText.toLowerCase().includes('metro');
+
+    if (isMetro) {
+      const metroName = route.line_name || `${route.start} - ${route.end}`;
+      return { mode: 'Metro', name: metroName, isMetro: true };
+    }
+
+    const busNumber = route.route_number || (/^\d+$/.test(idText) ? idText : 'N/A');
+    return { mode: 'Avtobus', name: `No ${busNumber}`, isMetro: false };
+  };
+
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden">
-      {/* Sidebar - Form & Results */}
-      <div className="w-[450px] bg-white border-r border-gray-200 flex flex-col h-full">
-        <div className="p-6 border-b border-gray-100">
+      {/* Left Sidebar - Form */}
+      <div className="w-[400px] bg-white border-r border-gray-200 flex flex-col h-full">
+        <div className="p-6">
           <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
              <MapPin size={20} /> Plan Journey
           </h2>
@@ -86,16 +100,13 @@ const Planner = () => {
             <div className="pt-2">
               <div className="flex justify-between text-xs font-bold text-gray-400 uppercase mb-3">
                 <span>Time Window</span>
-                <span>{time} AM</span>
+                <span>{time}</span>
               </div>
               <input 
-                type="range" 
-                min="06:00" 
-                max="23:59" 
-                step="30"
+                type="time"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-black"
+                className="w-full px-3 py-2 bg-gray-50 rounded-xl border-none text-sm focus:ring-2 focus:ring-black"
               />
             </div>
 
@@ -115,60 +126,6 @@ const Planner = () => {
                Metro lines M1 & M2 are currently at 95% capacity. AI suggests delaying departure by 15m for 40% less crowding.
              </p>
           </div>
-        </div>
-
-        {/* Results List */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50/50">
-          <div className="flex items-center justify-between mb-2">
-             <h3 className="font-bold text-sm text-gray-400 uppercase tracking-widest">Optimal Routes</h3>
-             <span className="text-xs text-gray-400 font-medium">{routes.length} paths found</span>
-          </div>
-
-          {error && <div className="text-red-500 text-sm p-4 bg-red-50 rounded-xl">{error}</div>}
-          
-          {routes.map((route, i) => (
-            <div key={i} className={`p-5 rounded-2xl bg-white border-2 transition-all cursor-pointer ${i === 0 ? 'border-black' : 'border-transparent hover:border-gray-200'}`}>
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl font-bold">{route.eta} <span className="text-sm font-medium text-gray-400">min</span></span>
-                  {i === 0 && <span className="bg-gray-100 text-[10px] font-bold px-2 py-1 rounded-md uppercase">AI Recommended</span>}
-                </div>
-                <div className="flex gap-1">
-                   {route.type === 'Metro' ? <div className="bg-purple-100 text-purple-600 p-1.5 rounded-lg"><Train size={16} /></div> : <div className="bg-orange-100 text-orange-600 p-1.5 rounded-lg"><Zap size={16} /></div>}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase">Crowding</span>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-                      <div className={`h-full ${route.crowding > 70 ? 'bg-red-500' : 'bg-green-500'}`} style={{ width: `${route.crowding}%` }} />
-                    </div>
-                    <span className="text-xs font-bold">{route.crowding}%</span>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase">Confidence</span>
-                  <div className="flex items-center gap-2">
-                     <span className="text-xs font-bold">{route.confidence}%</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-3 bg-gray-50 rounded-xl flex gap-2 mb-4">
-                 <Info size={14} className="text-gray-400 shrink-0 mt-0.5" />
-                 <p className="text-[11px] text-gray-600 italic leading-relaxed">{route.explanation}</p>
-              </div>
-
-              <div className="flex items-center justify-between pt-2">
-                 <button className="bg-black text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-800 transition-colors">Select Route</button>
-                 <div className="flex items-center gap-1.5 text-xs font-bold text-gray-400">
-                    <Clock size={14} /> <span>Wait 15m for +{route.bonus_points} pts</span>
-                 </div>
-              </div>
-            </div>
-          ))}
         </div>
       </div>
 
@@ -221,6 +178,82 @@ const Planner = () => {
                <span>09:45</span>
             </div>
          </div>
+      </div>
+
+      {/* Right Sidebar - Results */}
+      <div className="w-[420px] bg-white border-l border-gray-200 flex flex-col h-full">
+        <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-bold text-sm text-gray-400 uppercase tracking-widest">Optimal Routes</h3>
+          <span className="text-xs text-gray-400 font-medium">{routes.length} paths found</span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50/50">
+          {error && <div className="text-red-500 text-sm p-4 bg-red-50 rounded-xl">{error}</div>}
+
+          {!error && routes.length === 0 && !loading && (
+            <div className="text-sm text-gray-500 p-4 bg-white rounded-xl border border-gray-100">
+              Marşrut nəticələri burada görünəcək.
+            </div>
+          )}
+
+          {routes.map((route, i) => {
+            const meta = getRouteMeta(route);
+
+            return (
+              <div key={i} className={`p-5 rounded-2xl bg-white border-2 transition-all cursor-pointer ${i === 0 ? 'border-black' : 'border-transparent hover:border-gray-200'}`}>
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl font-bold">{route.eta} <span className="text-sm font-medium text-gray-400">min</span></span>
+                    {i === 0 && <span className="bg-gray-100 text-[10px] font-bold px-2 py-1 rounded-md uppercase">AI Recommended</span>}
+                  </div>
+                  <div className="flex gap-1">
+                    {meta.isMetro ? (
+                      <div className="bg-purple-100 text-purple-600 p-1.5 rounded-lg"><Train size={16} /></div>
+                    ) : (
+                      <div className="bg-orange-100 text-orange-600 p-1.5 rounded-lg"><Zap size={16} /></div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mb-3 text-xs font-semibold text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+                  <span className="text-gray-400 uppercase mr-2">Növ:</span>{meta.mode}
+                  <span className="mx-2 text-gray-300">|</span>
+                  <span className="text-gray-400 uppercase mr-2">Ad/Nömrə:</span>{meta.name}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase">Crowding</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                        <div className={`h-full ${route.crowding > 70 ? 'bg-red-500' : 'bg-green-500'}`} style={{ width: `${route.crowding}%` }} />
+                      </div>
+                      <span className="text-xs font-bold">{route.crowding}%</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase">Confidence</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold">{route.confidence}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-gray-50 rounded-xl flex gap-2 mb-4">
+                  <Info size={14} className="text-gray-400 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-gray-600 italic leading-relaxed">{route.explanation}</p>
+                </div>
+
+                <div className="flex items-center justify-between pt-2">
+                  <button className="bg-black text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-800 transition-colors">Select Route</button>
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-gray-400">
+                    <Clock size={14} /> <span>Wait 15m for +{route.bonus_points} pts</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
