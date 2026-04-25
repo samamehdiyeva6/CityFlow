@@ -12,9 +12,20 @@ const Planner = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [locations, setLocations] = useState({});
+  const [traffic, setTraffic] = useState({ rush_hours: [] });
+  const [selectedRoute, setSelectedRoute] = useState(null);
+  const [travelModeActive, setTravelModeActive] = useState(false);
+  const [decisionLoading, setDecisionLoading] = useState(false);
+  const [decisionMessage, setDecisionMessage] = useState('');
+  const [walletPoints, setWalletPoints] = useState(null);
+  const [bakikartBalance, setBakikartBalance] = useState(null);
+  const [pendingPeakDecision, setPendingPeakDecision] = useState(false);
+  const [alternativeBusLabel, setAlternativeBusLabel] = useState('');
 
   useEffect(() => {
     fetchLocations();
+    fetchTraffic();
+    fetchProfile();
   }, []);
 
   const fetchLocations = async () => {
@@ -23,6 +34,26 @@ const Planner = () => {
       setLocations(res.data);
     } catch (err) {
       console.error("Error fetching locations", err);
+    }
+  };
+
+  const fetchTraffic = async () => {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/traffic`);
+      setTraffic(res.data || { rush_hours: [] });
+    } catch (err) {
+      setTraffic({ rush_hours: [] });
+    }
+  };
+
+  const fetchProfile = async () => {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/user/profile`);
+      setWalletPoints(res.data?.wallet?.points ?? null);
+      setBakikartBalance(res.data?.wallet?.bakikart_balance ?? null);
+    } catch {
+      setWalletPoints(null);
+      setBakikartBalance(null);
     }
   };
 
@@ -35,6 +66,10 @@ const Planner = () => {
         params: { start, end, time }
       });
       setRoutes(res.data);
+      setSelectedRoute(null);
+      setTravelModeActive(false);
+      setPendingPeakDecision(false);
+      setDecisionMessage('');
     } catch (err) {
       setError("Marşrut tapılmadı. Zəhmət olmasa başqa yer seçin.");
       setRoutes([]);
@@ -55,6 +90,98 @@ const Planner = () => {
 
     const busNumber = route.route_number || (/^\d+$/.test(idText) ? idText : 'N/A');
     return { mode: 'Avtobus', name: `No ${busNumber}`, isMetro: false };
+  };
+
+  const isRushHour = () => {
+    const current = time || '08:30';
+    const toMinutes = (v) => {
+      const [h, m] = v.split(':').map(Number);
+      return h * 60 + m;
+    };
+    const now = toMinutes(current);
+
+    const windows = Array.isArray(traffic?.rush_hours) ? traffic.rush_hours : [];
+    return windows.some((window) => {
+      const parts = String(window).split('-');
+      if (parts.length !== 2) return false;
+      const startM = toMinutes(parts[0]);
+      const endM = toMinutes(parts[1]);
+      return now >= startM && now <= endM;
+    });
+  };
+
+  const findAlternativeBus = (route) => {
+    const selectedId = String(route?.id || '');
+    const alternative = routes.find((r) => {
+      const typeText = String(r?.type || '').toLowerCase();
+      const idText = String(r?.id || '');
+      const isMetro = typeText.includes('metro') || idText.toLowerCase().includes('metro');
+      return !isMetro && idText !== selectedId;
+    });
+
+    if (!alternative) return '';
+    const busNumber = alternative.route_number || alternative.id || 'N/A';
+    return `No ${busNumber}`;
+  };
+
+  const submitJourneyDecision = async (route, waited) => {
+    setDecisionLoading(true);
+    try {
+      const effectiveTime = waited ? addMinutesToTime(time, 15) : time;
+      const res = await axios.post(`${API_BASE_URL}/journey/decision`, {
+        start,
+        end,
+        route,
+        selected_time: effectiveTime,
+        waited,
+        wait_minutes: 15,
+      });
+
+      setWalletPoints(res.data?.wallet_points ?? walletPoints);
+      setBakikartBalance(res.data?.bakikart_balance ?? bakikartBalance);
+      setDecisionMessage(res.data?.message || (waited ? 'Gözləmə qərarı qeydə alındı.' : 'Səfər başladı.'));
+      setTravelModeActive(true);
+      setPendingPeakDecision(false);
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'Qərar yaddaşa yazılmadı.';
+      setDecisionMessage(msg);
+      setPendingPeakDecision(false);
+    } finally {
+      setDecisionLoading(false);
+    }
+  };
+
+  const handleSelectRoute = (route) => {
+    if (travelModeActive) {
+      return;
+    }
+
+    setSelectedRoute(route);
+    setDecisionMessage('');
+
+    if (isRushHour()) {
+      setPendingPeakDecision(true);
+      setTravelModeActive(false);
+      setAlternativeBusLabel(findAlternativeBus(route));
+      return;
+    }
+
+    submitJourneyDecision(route, false);
+  };
+
+  const addMinutesToTime = (hhmm, plusMinutes) => {
+    const [hh, mm] = String(hhmm || '08:30').split(':').map(Number);
+    const total = (hh * 60 + mm + plusMinutes) % (24 * 60);
+    const outH = String(Math.floor(total / 60)).padStart(2, '0');
+    const outM = String(total % 60).padStart(2, '0');
+    return `${outH}:${outM}`;
+  };
+
+  const deactivateTravelMode = () => {
+    setTravelModeActive(false);
+    setSelectedRoute(null);
+    setPendingPeakDecision(false);
+    setDecisionMessage('Səyahət modu deaktiv edildi. Yeni route seçə bilərsiniz.');
   };
 
   return (
@@ -188,6 +315,62 @@ const Planner = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50/50">
+          {walletPoints !== null && (
+            <div className="p-3 rounded-xl bg-black text-white text-xs font-semibold">
+              Wallet Balance: {walletPoints} pts
+            </div>
+          )}
+
+          {bakikartBalance !== null && (
+            <div className="p-3 rounded-xl bg-white border border-gray-200 text-xs font-semibold text-gray-700">
+              BakiKart Balance: {Number(bakikartBalance).toFixed(2)} AZN
+            </div>
+          )}
+
+          {travelModeActive && selectedRoute && (
+            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800">
+              <p className="text-xs font-bold uppercase mb-1">Səyahət Modu Aktivdir</p>
+              <p className="text-sm">Seçilmiş marşrut: {selectedRoute.start} → {selectedRoute.end}</p>
+              <button
+                onClick={deactivateTravelMode}
+                className="mt-3 bg-white border border-emerald-300 text-emerald-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-emerald-100"
+              >
+                Deaktiv et və route dəyiş
+              </button>
+            </div>
+          )}
+
+          {pendingPeakDecision && selectedRoute && (
+            <div className="p-4 rounded-xl bg-orange-50 border border-orange-200 text-orange-800 space-y-3">
+              <p className="text-xs font-bold uppercase">Pik saat tövsiyəsi</p>
+              <p className="text-sm leading-relaxed">
+                Hazırda pik saatdır. 15 dəqiqə gözləyib {alternativeBusLabel || 'alternativ avtobusa'} minsəniz əlavə +{selectedRoute.bonus_points || 0} point qazanacaqsınız.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  disabled={decisionLoading}
+                  onClick={() => submitJourneyDecision(selectedRoute, true)}
+                  className="bg-black text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                >
+                  Gözləyirəm (+point)
+                </button>
+                <button
+                  disabled={decisionLoading}
+                  onClick={() => submitJourneyDecision(selectedRoute, false)}
+                  className="bg-white text-gray-700 border border-gray-300 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                >
+                  İndi minirəm (0 point)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {decisionMessage && (
+            <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-sm">
+              {decisionMessage}
+            </div>
+          )}
+
           {error && <div className="text-red-500 text-sm p-4 bg-red-50 rounded-xl">{error}</div>}
 
           {!error && routes.length === 0 && !loading && (
@@ -198,9 +381,11 @@ const Planner = () => {
 
           {routes.map((route, i) => {
             const meta = getRouteMeta(route);
+            const isSelected = selectedRoute && route.id === selectedRoute.id;
+            const isDisabledByTravelMode = travelModeActive && !isSelected;
 
             return (
-              <div key={i} className={`p-5 rounded-2xl bg-white border-2 transition-all cursor-pointer ${i === 0 ? 'border-black' : 'border-transparent hover:border-gray-200'}`}>
+              <div key={i} className={`p-5 rounded-2xl bg-white border-2 transition-all ${isDisabledByTravelMode ? 'opacity-45' : 'cursor-pointer'} ${isSelected ? 'border-emerald-500' : i === 0 ? 'border-black' : 'border-transparent hover:border-gray-200'}`}>
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-3">
                     <span className="text-2xl font-bold">{route.eta} <span className="text-sm font-medium text-gray-400">min</span></span>
@@ -245,7 +430,13 @@ const Planner = () => {
                 </div>
 
                 <div className="flex items-center justify-between pt-2">
-                  <button className="bg-black text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-800 transition-colors">Select Route</button>
+                  <button
+                    disabled={decisionLoading || isDisabledByTravelMode || (travelModeActive && !isSelected)}
+                    onClick={() => handleSelectRoute(route)}
+                    className="bg-black text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-800 transition-colors disabled:opacity-40"
+                  >
+                    {isSelected ? 'Selected' : 'Select Route'}
+                  </button>
                   <div className="flex items-center gap-1.5 text-xs font-bold text-gray-400">
                     <Clock size={14} /> <span>Wait 15m for +{route.bonus_points} pts</span>
                   </div>

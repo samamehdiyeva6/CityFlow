@@ -11,6 +11,7 @@ class User(Base):
     joined_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     wallet = relationship("Wallet", back_populates="user", uselist=False)
+    card_balance = relationship("CardBalance", back_populates="user", uselist=False)
     journeys = relationship("JourneyHistory", back_populates="user")
     coupons = relationship("UserCoupon", back_populates="user")
 
@@ -34,6 +35,15 @@ class BonusTransaction(Base):
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
     
     wallet = relationship("Wallet", back_populates="transactions")
+
+
+class CardBalance(Base):
+    __tablename__ = "card_balances"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    amount_azn = Column(Float, default=10.0)
+
+    user = relationship("User", back_populates="card_balance")
 
 class JourneyHistory(Base):
     __tablename__ = "journey_history"
