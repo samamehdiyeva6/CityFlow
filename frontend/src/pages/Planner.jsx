@@ -63,7 +63,7 @@ const MapController = ({ actionToken, focusPoint, bounds }) => {
   return null;
 };
 
-const Planner = ({ signedInEmail }) => {
+const Planner = ({ signedInEmail, onProfileRefresh }) => {
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [time, setTime] = useState(getCurrentTimeHHMM);
@@ -362,6 +362,8 @@ const Planner = ({ signedInEmail }) => {
         wait_skipped_demo: waited ? waitSkippedDemo : false,
         fare_paid: totalPaidAmount > 0,
         paid_amount_azn: totalPaidAmount,
+      }, {
+        params: signedInEmail ? { user_email: signedInEmail } : undefined,
       });
 
       setWalletPoints(res.data?.wallet_points ?? walletPoints);
@@ -377,6 +379,7 @@ const Planner = ({ signedInEmail }) => {
       setWaitSkippedDemo(false);
       stopTripTracking(true);
       fetchProfile();
+      onProfileRefresh?.();
     } catch (err) {
       const msg = err?.response?.data?.detail || 'Qərar yaddaşa yazılmadı.';
       setDecisionMessage(msg);
@@ -415,6 +418,8 @@ const Planner = ({ signedInEmail }) => {
           selected_time: time,
           origin_lat: coords.lat,
           origin_lon: coords.lon,
+        }, {
+          params: signedInEmail ? { user_email: signedInEmail } : undefined,
         });
         setWaitSuggestion(res.data);
         setWaitStarted(false);
@@ -575,6 +580,8 @@ const Planner = ({ signedInEmail }) => {
       navigator.geolocation.clearWatch(watchIdRef.current);
       axios.post(`${API_BASE_URL}/api/v1/trips/stop`, {
         session_id: trackingSessionIdRef.current,
+      }, {
+        params: signedInEmail ? { user_email: signedInEmail } : undefined,
       }).catch((err) => console.error("Failed to rotate tracking session", err));
     }
 
@@ -603,6 +610,8 @@ const Planner = ({ signedInEmail }) => {
             accuracy_m: position.coords.accuracy ?? null,
             speed_mps: position.coords.speed ?? null,
             selected_time: selectedTime || time,
+          }, {
+            params: signedInEmail ? { user_email: signedInEmail } : undefined,
           });
           setTrackingStatus({
             active: true,
@@ -635,6 +644,8 @@ const Planner = ({ signedInEmail }) => {
       try {
         await axios.post(`${API_BASE_URL}/api/v1/trips/stop`, {
           session_id: trackingSessionIdRef.current,
+        }, {
+          params: signedInEmail ? { user_email: signedInEmail } : undefined,
         });
       } catch (err) {
         console.error("Failed to stop trip tracking", err);
@@ -689,7 +700,9 @@ const Planner = ({ signedInEmail }) => {
         qr_code: qrCode,
       };
 
-      const res = await axios.post(`${API_BASE_URL}/api/v1/payments/qr`, payload);
+      const res = await axios.post(`${API_BASE_URL}/api/v1/payments/qr`, payload, {
+        params: signedInEmail ? { user_email: signedInEmail } : undefined,
+      });
       setCurrentStepPaid(true);
       setTotalPaidAmount((prev) => prev + Number(payload.amount_azn || 0));
       setBakikartBalance(res.data?.bakikart_balance ?? bakikartBalance);
@@ -702,6 +715,7 @@ const Planner = ({ signedInEmail }) => {
         (hasNextStep ? 'Transfer üçün növbəti step bitəndə davam edin.' : 'Trip başladı və countdown aktivdir.')
       );
       fetchProfile();
+      onProfileRefresh?.();
     } catch (err) {
       const msg = err?.response?.data?.detail || 'Ödəniş uğursuz oldu.';
       setPaymentMessage(msg);

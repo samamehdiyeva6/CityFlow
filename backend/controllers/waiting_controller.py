@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -9,9 +11,21 @@ from services.waiting_bonus_service import waiting_bonus_service
 router = APIRouter(prefix="/api/v1/waiting", tags=["waiting"])
 
 
+def _resolve_user(db: Session, user_email: Optional[str]):
+    if user_email:
+        credential = (
+            db.query(models.SignInCredential)
+            .filter(models.SignInCredential.email == user_email.strip().lower())
+            .first()
+        )
+        if credential:
+            return db.query(models.User).filter(models.User.id == credential.user_id).first()
+    return db.query(models.User).first()
+
+
 @router.post("/suggest", response_model=WaitSuggestionResponse)
-async def suggest_wait_bonus(payload: WaitSuggestionRequest, db: Session = Depends(get_db)):
-    user = db.query(models.User).first()
+async def suggest_wait_bonus(payload: WaitSuggestionRequest, user_email: Optional[str] = None, db: Session = Depends(get_db)):
+    user = _resolve_user(db, user_email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

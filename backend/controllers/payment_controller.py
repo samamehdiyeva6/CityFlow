@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -9,9 +11,21 @@ from services.payment_service import payment_service
 router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
 
 
+def _resolve_user(db: Session, user_email: Optional[str]):
+    if user_email:
+        credential = (
+            db.query(models.SignInCredential)
+            .filter(models.SignInCredential.email == user_email.strip().lower())
+            .first()
+        )
+        if credential:
+            return db.query(models.User).filter(models.User.id == credential.user_id).first()
+    return db.query(models.User).first()
+
+
 @router.post("/nfc", response_model=NFCPaymentResponse)
-async def record_nfc_payment(payload: NFCPaymentRequest, db: Session = Depends(get_db)):
-    user = db.query(models.User).first()
+async def record_nfc_payment(payload: NFCPaymentRequest, user_email: Optional[str] = None, db: Session = Depends(get_db)):
+    user = _resolve_user(db, user_email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -22,8 +36,8 @@ async def record_nfc_payment(payload: NFCPaymentRequest, db: Session = Depends(g
 
 
 @router.post("/qr", response_model=QRPaymentResponse)
-async def record_qr_payment(payload: QRPaymentRequest, db: Session = Depends(get_db)):
-    user = db.query(models.User).first()
+async def record_qr_payment(payload: QRPaymentRequest, user_email: Optional[str] = None, db: Session = Depends(get_db)):
+    user = _resolve_user(db, user_email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

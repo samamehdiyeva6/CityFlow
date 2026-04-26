@@ -166,6 +166,45 @@ def _resolve_selection_bonus(route: dict) -> int:
     return int(route.get("bonus_points", 0) or 0)
 
 
+def _estimate_route_distance_km(route: dict) -> float:
+    explicit_distance = route.get("distance_km")
+    if explicit_distance is not None:
+        try:
+            return max(0.5, float(explicit_distance))
+        except (TypeError, ValueError):
+            pass
+
+    segments = route.get("segments") or []
+    total_km = 0.0
+    for seg in segments:
+        seg_distance = seg.get("distance_km")
+        if seg_distance is not None:
+            try:
+                total_km += max(0.0, float(seg_distance))
+            except (TypeError, ValueError):
+                continue
+
+    if total_km > 0:
+        return total_km
+
+    eta_min = route.get("eta")
+    try:
+        eta_min = float(eta_min)
+    except (TypeError, ValueError):
+        eta_min = 12.0
+    return max(0.8, eta_min * 0.45)
+
+
+def _estimate_co2_saved_kg(route: dict, waited: bool, low_density_selected: bool) -> float:
+    distance_km = _estimate_route_distance_km(route)
+    car_baseline_kg = distance_km * 0.192
+    transit_kg = distance_km * 0.06
+    saved_kg = max(0.0, car_baseline_kg - transit_kg)
+    if waited or low_density_selected:
+        saved_kg *= 1.1
+    return round(saved_kg, 3)
+
+
 def _get_user_by_email(db: Session, email: Optional[str]) -> models.User:
     if email:
         credential = (
@@ -179,8 +218,8 @@ def _get_user_by_email(db: Session, email: Optional[str]) -> models.User:
 
 
 @app.post("/journey/decision")
-async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depends(get_db)):
-    user = db.query(models.User).first()
+async def journey_decision(payload: JourneyDecisionRequest, user_email: Optional[str] = None, db: Session = Depends(get_db)):
+    user = _get_user_by_email(db, user_email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -231,6 +270,8 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         earned_points = 0
 
     wallet.points += earned_points
+    carbon_saved_kg = _estimate_co2_saved_kg(payload.route, payload.waited, low_density_selected)
+    wallet.co2_saved = round(float(wallet.co2_saved or 0.0) + carbon_saved_kg, 3)
     if earned_points > 0:
         wallet.peak_crowds_avoided += 1
 
@@ -250,6 +291,7 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
             "wait_skipped_demo": payload.wait_skipped_demo,
             "selection_bonus_points": route_bonus,
             "wait_bonus_points": wait_bonus_points,
+            "carbon_saved_kg": carbon_saved_kg,
             "fare_paid": payload.fare_paid,
             "low_density_selected": low_density_selected,
         },
@@ -281,6 +323,7 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         "cost_deducted": round(float(payload.paid_amount_azn or route_cost), 2),
         "bakikart_balance": round(user.card_balance.amount_azn, 2),
         "points_earned": earned_points,
+        "carbon_saved_kg": carbon_saved_kg,
         "wallet_points": wallet.points,
         "wait_bonus_verified": wait_bonus_points > 0,
         "fare_payment_recorded": latest_payment is not None,
@@ -403,17 +446,56 @@ async def get_profile(email: Optional[str] = None, db: Session = Depends(get_db)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    history_items = [
+        {
+            "id": item.id,
+            "start_location": item.start_location,
+            "end_location": item.end_location,
+            "timestamp": item.timestamp.isoformat() if item.timestamp else None,
+            "points_earned": item.points_earned,
+            "route_details": item.route_details or {},
+        }
+        for item in sorted(user.journeys, key=lambda x: x.timestamp or datetime.datetime.min, reverse=True)
+    ]
+
+    fare_items = [
+        {
+            "id": item.id,
+            "payment_method": item.payment_method,
+            "route_number": item.route_number,
+            "validator_stop": item.validator_stop,
+            "amount_azn": item.amount_azn,
+            "paid_at": item.paid_at.isoformat() if item.paid_at else None,
+            "boarding_status": item.boarding_status,
+        }
+        for item in db.query(models.FareTransaction).filter(models.FareTransaction.user_id == user.id).order_by(models.FareTransaction.paid_at.desc()).all()
+    ]
+
+    bonus_items = []
+    if user.wallet:
+        bonus_items = [
+            {
+                "id": item.id,
+                "amount": item.amount,
+                "description": item.description,
+                "timestamp": item.timestamp.isoformat() if item.timestamp else None,
+            }
+            for item in sorted(user.wallet.transactions, key=lambda x: x.timestamp or datetime.datetime.min, reverse=True)
+        ]
+
     return {
         "full_name": user.full_name,
         "email": user.email,
+        "joined_at": user.joined_at.isoformat() if user.joined_at else None,
         "wallet": {
             "points": user.wallet.points,
             "bakikart_balance": user.card_balance.amount_azn if user.card_balance else 0.0,
             "co2_saved": user.wallet.co2_saved,
             "peak_crowds_avoided": user.wallet.peak_crowds_avoided
         },
-        "history": user.journeys,
-        "fare_transactions": db.query(models.FareTransaction).filter(models.FareTransaction.user_id == user.id).order_by(models.FareTransaction.paid_at.desc()).all(),
+        "history": history_items,
+        "fare_transactions": fare_items,
+        "bonus_transactions": bonus_items,
         "coupons": user.coupons
     }
 

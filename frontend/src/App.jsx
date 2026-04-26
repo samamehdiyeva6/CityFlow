@@ -5,6 +5,7 @@ import Planner from './pages/Planner';
 import Rewards from './pages/Rewards';
 import SystemAI from './pages/SystemAI';
 import SignIn from './pages/SignIn';
+import { getMembershipTier } from './utils/membership';
 import axios from 'axios';
 
 const API_BASE_URL = "http://127.0.0.1:8000";
@@ -17,7 +18,13 @@ function App() {
   useEffect(() => {
     if (signedInEmail) {
       fetchProfile(signedInEmail);
-      return;
+      const intervalId = window.setInterval(() => fetchProfile(signedInEmail), 3000);
+      const onFocus = () => fetchProfile(signedInEmail);
+      window.addEventListener('focus', onFocus);
+      return () => {
+        window.clearInterval(intervalId);
+        window.removeEventListener('focus', onFocus);
+      };
     }
     setUserProfile(null);
   }, [signedInEmail]);
@@ -54,8 +61,8 @@ function App() {
     switch (currentPage) {
       case 'signin': return <SignIn onSignedIn={handleSignedIn} />;
       case 'landing': return <Landing onStart={() => setCurrentPage('planner')} />;
-      case 'planner': return <Planner signedInEmail={signedInEmail} />;
-      case 'rewards': return <Rewards profile={userProfile} />;
+      case 'planner': return <Planner signedInEmail={signedInEmail} onProfileRefresh={() => fetchProfile(signedInEmail)} />;
+      case 'rewards': return <Rewards profile={userProfile} membershipTier={getMembershipTier(userProfile?.wallet?.points)} />;
       case 'system': return <SystemAI />;
       default: return <SignIn onSignedIn={handleSignedIn} />;
     }
@@ -67,6 +74,7 @@ function App() {
         currentPage={currentPage} 
         onNavigate={setCurrentPage} 
         points={userProfile?.wallet?.points || 0}
+        membershipTier={getMembershipTier(userProfile?.wallet?.points)}
         isSignedIn={Boolean(signedInEmail)}
         onAuthAction={handleAuthAction}
       />

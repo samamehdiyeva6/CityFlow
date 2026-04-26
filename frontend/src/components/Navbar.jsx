@@ -1,7 +1,7 @@
 import React from 'react';
 import { Train, Map, Gift, Shield, User } from 'lucide-react';
 
-const Navbar = ({ currentPage, onNavigate, points, isSignedIn, onAuthAction }) => {
+const Navbar = ({ currentPage, onNavigate, points, membershipTier, isSignedIn, onAuthAction }) => {
   const navItems = [
     { id: 'landing', label: 'How it works', icon: null },
     { id: 'planner', label: 'Route Planner', icon: Map },
@@ -35,7 +35,7 @@ const Navbar = ({ currentPage, onNavigate, points, isSignedIn, onAuthAction }) =
       <div className="flex items-center gap-4">
         <div className="flex flex-col items-end mr-2">
           <span className="text-xs font-bold text-gray-500 uppercase">{points} pts</span>
-          <span className="text-[10px] text-green-600 font-medium">Premium Member</span>
+          <span className="text-[10px] text-green-600 font-medium">{membershipTier} Member</span>
         </div>
         <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200">
           <User size={20} className="text-gray-600" />

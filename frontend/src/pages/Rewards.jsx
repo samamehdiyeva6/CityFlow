@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Award, Zap, History, Target, Settings, ChevronRight, ShoppingBag, Gift } from 'lucide-react';
+import { getMembershipTier } from '../utils/membership';
 
 const API_BASE_URL = "http://127.0.0.1:8000";
 
-const Rewards = ({ profile }) => {
+const Rewards = ({ profile, membershipTier }) => {
   const [coupons, setCoupons] = useState([]);
 
   useEffect(() => {
@@ -20,13 +21,41 @@ const Rewards = ({ profile }) => {
     }
   };
 
+  const points = Number(profile?.wallet?.points || 0);
+  const tier = membershipTier || getMembershipTier(points);
+  const nextTierTarget = points < 1000 ? 1000 : points < 2000 ? 2000 : points < 5000 ? 5000 : 10000;
+  const pointsToNextTier = Math.max(0, nextTierTarget - points);
+  const progress = Math.max(0, Math.min(100, Math.round((points / nextTierTarget) * 100)));
+  const joinedLabel = profile?.joined_at
+    ? new Date(profile.joined_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+    : 'Recent';
+
+  const activityFeed = [
+    ...(profile?.history || []).map((item) => ({
+      id: `journey-${item.id}`,
+      title: `${item.start_location || 'Start'} to ${item.end_location || 'Destination'}`,
+      date: item.timestamp,
+      value: Number(item.points_earned || 0),
+      type: 'Trip',
+    })),
+  ]
+    .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+    .slice(0, 8);
+
+  const formatActivityDate = (value) => {
+    if (!value) return 'Unknown time';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return 'Unknown time';
+    return d.toLocaleString();
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-6 py-12">
       {/* Header Stat Card */}
       <div className="bg-black text-white rounded-3xl p-10 flex flex-col md:flex-row justify-between items-center gap-12 mb-12 relative overflow-hidden">
         <div className="relative z-10">
           <div className="inline-flex items-center gap-2 bg-white/10 px-3 py-1 rounded-full text-[10px] font-bold uppercase mb-4">
-             <Award size={12} className="text-yellow-400" /> Bronze Member <span className="text-gray-400 ml-2">Joined Feb 2024</span>
+             <Award size={12} className="text-yellow-400" /> {tier} Member <span className="text-gray-400 ml-2">Joined {joinedLabel}</span>
           </div>
           <div className="flex items-baseline gap-2">
             <h2 className="text-7xl font-bold">{profile?.wallet?.points || 0}</h2>
@@ -41,13 +70,13 @@ const Rewards = ({ profile }) => {
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/10">
              <div className="flex justify-between items-center mb-4">
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Next Tier</span>
-                <span className="text-xs font-bold">Silver Status</span>
+                <span className="text-xs font-bold">{points >= 5000 ? 'Top Tier' : `${nextTierTarget} pts tier`}</span>
              </div>
              <div className="text-right mb-2">
-                <span className="text-xs font-bold">750 pts to go</span>
+                <span className="text-xs font-bold">{pointsToNextTier} pts to go</span>
              </div>
              <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden mb-4">
-                <div className="h-full bg-white" style={{ width: '60%' }} />
+                <div className="h-full bg-white" style={{ width: `${progress}%` }} />
              </div>
              <div className="flex justify-between text-[10px] font-bold text-gray-500 uppercase tracking-tighter">
                 <span>Bronze</span>
@@ -71,24 +100,24 @@ const Rewards = ({ profile }) => {
                <button className="text-xs font-bold text-gray-400 uppercase hover:text-black">Full History</button>
             </div>
             <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden">
-               {[
-                 { title: "28 May to Koroglu", date: "Today, 08:45 AM", pts: "+45 pts", type: "AI Suggested" },
-                 { title: "Espresso Baku - Flat White", date: "Yesterday, 04:20 PM", pts: "-150 pts", type: "Spent" },
-                 { title: "Icherisheher to Elmler Akademiyasi", date: "24 May, 06:15 PM", pts: "+60 pts", type: "Off-peak Reward" },
-               ].map((item, i) => (
-                 <div key={i} className="flex items-center justify-between p-6 border-b border-gray-50 last:border-none hover:bg-gray-50 transition-colors">
+               {activityFeed.length ? activityFeed.map((item) => (
+                 <div key={item.id} className="flex items-center justify-between p-6 border-b border-gray-50 last:border-none hover:bg-gray-50 transition-colors">
                     <div className="flex items-center gap-4">
                        <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center text-gray-400">
-                          {item.pts.startsWith('+') ? <Zap size={20} className="text-yellow-500" /> : <ShoppingBag size={20} className="text-blue-500" />}
+                          {item.value >= 0 ? <Zap size={20} className="text-yellow-500" /> : <ShoppingBag size={20} className="text-blue-500" />}
                        </div>
                        <div>
                           <h4 className="font-bold text-sm">{item.title}</h4>
-                          <p className="text-xs text-gray-400 mt-1">{item.date} • <span className="font-bold text-gray-300 uppercase text-[9px] tracking-widest">{item.type}</span></p>
+                          <p className="text-xs text-gray-400 mt-1">{formatActivityDate(item.date)} • <span className="font-bold text-gray-300 uppercase text-[9px] tracking-widest">{item.type}</span></p>
                        </div>
                     </div>
-                    <span className={`font-bold ${item.pts.startsWith('+') ? 'text-green-600' : 'text-gray-900'}`}>{item.pts}</span>
+                    <span className={`font-bold ${item.value >= 0 ? 'text-green-600' : 'text-gray-900'}`}>
+                      {item.value >= 0 ? '+' : ''}{item.value.toFixed(0)} pts
+                    </span>
                  </div>
-               ))}
+               )) : (
+                 <div className="p-6 text-sm text-gray-500">Hələ activity yoxdur.</div>
+               )}
             </div>
           </section>
 
