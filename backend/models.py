@@ -15,6 +15,7 @@ class User(Base):
     card_balance = relationship("CardBalance", back_populates="user", uselist=False)
     journeys = relationship("JourneyHistory", back_populates="user")
     coupons = relationship("UserCoupon", back_populates="user")
+    sign_in_credential = relationship("SignInCredential", back_populates="user", uselist=False)
 
 class Wallet(Base):
     __tablename__ = "wallets"
@@ -137,3 +138,17 @@ class FareTransaction(Base):
     boarding_status = Column(String, default="PAID", nullable=False)
     matched_wait_session_id = Column(String, nullable=True)
     matched_wait_minutes = Column(Integer, nullable=True)
+
+
+class SignInCredential(Base):
+    __tablename__ = "signin_credentials"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    full_name = Column(String, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    bakikart_id = Column(String, nullable=False)
+    phone = Column(String, nullable=True)
+    password = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="sign_in_credential")

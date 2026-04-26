@@ -63,7 +63,7 @@ const MapController = ({ actionToken, focusPoint, bounds }) => {
   return null;
 };
 
-const Planner = () => {
+const Planner = ({ signedInEmail }) => {
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [time, setTime] = useState(getCurrentTimeHHMM);
@@ -102,13 +102,15 @@ const Planner = () => {
   const [trackingStatus, setTrackingStatus] = useState({ active: false, nearbyUsers: 0, densityScore: 0 });
   const [waitSuggestion, setWaitSuggestion] = useState(null);
   const [waitCountdown, setWaitCountdown] = useState(0);
+  const [waitStarted, setWaitStarted] = useState(false);
+  const [waitTargetAt, setWaitTargetAt] = useState(null);
+  const [waitSkippedDemo, setWaitSkippedDemo] = useState(false);
   const watchIdRef = useRef(null);
   const trackingSessionIdRef = useRef(`trip-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
 
   useEffect(() => {
     fetchLocations();
     fetchTraffic();
-    fetchProfile();
     detectCurrentLocation();
 
     return () => {
@@ -117,8 +119,21 @@ const Planner = () => {
   }, []);
 
   useEffect(() => {
-    const departureAt = waitSuggestion?.recommended_departure_at || waitSuggestion?.recommendedDepartureAt;
-    if (!departureAt) {
+    fetchProfile();
+
+    // Keep wallet/balance synced with DB while page stays open.
+    const intervalId = window.setInterval(fetchProfile, 12000);
+    const onFocus = () => fetchProfile();
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [signedInEmail]);
+
+  useEffect(() => {
+    if (!waitTargetAt) {
       setWaitCountdown(0);
       return undefined;
     }
@@ -126,7 +141,7 @@ const Planner = () => {
     const tick = () => {
       const remaining = Math.max(
         0,
-        Math.floor((new Date(departureAt).getTime() - Date.now()) / 1000)
+        Math.floor((new Date(waitTargetAt).getTime() - Date.now()) / 1000)
       );
       setWaitCountdown(remaining);
     };
@@ -134,7 +149,7 @@ const Planner = () => {
     tick();
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
-  }, [waitSuggestion]);
+  }, [waitTargetAt]);
 
   useEffect(() => {
     if (!journeyStarted || journeyCompleted || journeyTimerSec <= 0) {
@@ -217,7 +232,9 @@ const Planner = () => {
 
   const fetchProfile = async () => {
     try {
-      const res = await axios.get(`${API_BASE_URL}/user/profile`);
+      const res = await axios.get(`${API_BASE_URL}/user/profile`, {
+        params: signedInEmail ? { email: signedInEmail } : undefined,
+      });
       setWalletPoints(res.data?.wallet?.points ?? null);
       setBakikartBalance(res.data?.wallet?.bakikart_balance ?? null);
     } catch {
@@ -262,6 +279,7 @@ const Planner = () => {
       setJourneyCompleted(false);
       setTotalPaidAmount(0);
       setWaitedForBonus(false);
+      setWaitSkippedDemo(false);
       setActiveWaitSessionId(null);
       setSelectedJourneyTime(time);
       if (useCurrentLocation && userLocation && res.data?.origin?.name) {
@@ -341,6 +359,7 @@ const Planner = () => {
         waited,
         wait_minutes: 15,
         wait_session_id: waited ? activeWaitSessionId : null,
+        wait_skipped_demo: waited ? waitSkippedDemo : false,
         fare_paid: totalPaidAmount > 0,
         paid_amount_azn: totalPaidAmount,
       });
@@ -353,6 +372,9 @@ const Planner = () => {
       setJourneyCompleted(true);
       setPendingPeakDecision(false);
       setWaitSuggestion(null);
+      setWaitStarted(false);
+      setWaitTargetAt(null);
+      setWaitSkippedDemo(false);
       stopTripTracking(true);
       fetchProfile();
     } catch (err) {
@@ -395,6 +417,10 @@ const Planner = () => {
           origin_lon: coords.lon,
         });
         setWaitSuggestion(res.data);
+        setWaitStarted(false);
+        setWaitTargetAt(null);
+        setWaitCountdown(0);
+        setWaitSkippedDemo(false);
         startTripTracking(route, time, 'WAITING', res.data.session_id);
       } catch (err) {
         console.error("Waiting suggestion failed", err);
@@ -423,6 +449,10 @@ const Planner = () => {
     setSelectedRoute(null);
     setPendingPeakDecision(false);
     setWaitSuggestion(null);
+    setWaitStarted(false);
+    setWaitTargetAt(null);
+    setWaitCountdown(0);
+    setWaitSkippedDemo(false);
     setPaymentSteps([]);
     setCurrentStepIndex(0);
     setCurrentStepPaid(false);
@@ -671,6 +701,7 @@ const Planner = () => {
         `QR payment confirmed for step ${currentStepIndex + 1}. ` +
         (hasNextStep ? 'Transfer üçün növbəti step bitəndə davam edin.' : 'Trip başladı və countdown aktivdir.')
       );
+      fetchProfile();
     } catch (err) {
       const msg = err?.response?.data?.detail || 'Ödəniş uğursuz oldu.';
       setPaymentMessage(msg);
@@ -717,6 +748,33 @@ const Planner = () => {
 
   const completeJourneyAndClaim = () => {
     submitJourneyDecision(selectedRoute, waitedForBonus);
+  };
+
+  const startWaitingCountdown = () => {
+    const etaMinutes = Number(selectedRoute?.eta || 0);
+    const waitSeconds = Math.max(30, Math.round((Number.isFinite(etaMinutes) && etaMinutes > 0 ? etaMinutes : 15) * 60));
+    setWaitStarted(true);
+    setWaitSkippedDemo(false);
+    setWaitedForBonus(true);
+    setWaitTargetAt(new Date(Date.now() + waitSeconds * 1000).toISOString());
+    setWaitCountdown(waitSeconds);
+    setPaymentMessage('Gözləmə countdown başladı. Vaxt bitəndən sonra bonuslu marşruta minə bilərsiniz.');
+  };
+
+  const startBonusJourneyAfterWait = () => {
+    if (!waitSuggestion) return;
+    setActiveWaitSessionId(waitSuggestion?.session_id || activeWaitSessionId);
+    initializeJourneyFlow(selectedRoute, addMinutesToTime(time, 15), true, waitSuggestion?.session_id || null);
+  };
+
+  const skipWaitForDemo = () => {
+    setWaitStarted(true);
+    setWaitTargetAt(null);
+    setWaitCountdown(0);
+    setWaitSkippedDemo(true);
+    setWaitedForBonus(true);
+    setActiveWaitSessionId(waitSuggestion?.session_id || activeWaitSessionId);
+    setPaymentMessage('Demo üçün gözləmə skip edildi. Bonus üçün gözlənilmiş kimi davam edəcəksiniz.');
   };
 
   const skipToEndDemo = async () => {
@@ -1183,24 +1241,27 @@ const Planner = () => {
             <div className="p-4 rounded-xl bg-orange-50 border border-orange-200 text-orange-800 space-y-3">
               <p className="text-xs font-bold uppercase">Pik saat tövsiyəsi</p>
               <p className="text-sm leading-relaxed">
-                Hazırda pik saatdır. {waitSuggestion?.projected_density_score ?? selectedRoute.crowding}% səviyyəsinə düşməsi gözlənir. {alternativeBusLabel || 'alternativ avtobusa'} 15 dəqiqə sonra minsəniz əlavə +{waitSuggestion?.bonus_points || 25} point qazanacaqsınız.
+                Hazırda pik saatdır. {waitSuggestion?.projected_density_score ?? selectedRoute.crowding}% səviyyəsinə düşməsi gözlənir. {alternativeBusLabel || 'alternativ avtobusa'} təxmini {Math.max(1, Math.ceil(Number(selectedRoute?.eta || 15)))} dəqiqə sonra minsəniz əlavə +{waitSuggestion?.bonus_points || 25} point qazanacaqsınız.
               </p>
-              {waitSuggestion && (
+              {waitSuggestion && waitStarted && (
                 <div className="p-3 rounded-lg bg-white border border-orange-200 text-xs text-orange-900 font-semibold">
                   Countdown: {String(Math.floor(waitCountdown / 60)).padStart(2, '0')}:{String(waitCountdown % 60).padStart(2, '0')}
                 </div>
               )}
               <div className="flex gap-2">
                 <button
-                  disabled={decisionLoading || waitCountdown > 0}
-                  onClick={() => {
-                    setWaitedForBonus(true);
-                    setActiveWaitSessionId(waitSuggestion?.session_id || activeWaitSessionId);
-                    initializeJourneyFlow(selectedRoute, addMinutesToTime(time, 15), true, waitSuggestion?.session_id || null);
-                  }}
+                  disabled={decisionLoading || waitStarted}
+                  onClick={startWaitingCountdown}
                   className="bg-black text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
                 >
-                  Gözləyirəm (+point)
+                  Gözləməyə başla (+point)
+                </button>
+                <button
+                  disabled={decisionLoading || !waitStarted || waitCountdown > 0}
+                  onClick={startBonusJourneyAfterWait}
+                  className="bg-black text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                >
+                  Marşruta min (+point)
                 </button>
                 <button
                   disabled={decisionLoading}
@@ -1216,15 +1277,10 @@ const Planner = () => {
                 </button>
                 <button
                   disabled={decisionLoading}
-                  onClick={() => {
-                    setWaitCountdown(0);
-                    setWaitedForBonus(true);
-                    setActiveWaitSessionId(waitSuggestion?.session_id || activeWaitSessionId);
-                    setPaymentMessage('Demo skip edildi, sanki gözlədiniz. İndi QR ilə minə bilərsiniz.');
-                  }}
+                  onClick={skipWaitForDemo}
                   className="bg-white text-orange-700 border border-orange-300 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
                 >
-                  Wait skip
+                  Wait skip (demo)
                 </button>
               </div>
             </div>

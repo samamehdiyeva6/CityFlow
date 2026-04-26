@@ -50,8 +50,18 @@ def startup_populate():
             wallet = models.Wallet(user_id=new_user.id, points=1250, co2_saved=4.2, peak_crowds_avoided=12)
             db.add(wallet)
 
-            card_balance = models.CardBalance(user_id=new_user.id, amount_azn=15.0)
+            card_balance = models.CardBalance(user_id=new_user.id, amount_azn=100.0)
             db.add(card_balance)
+            db.add(
+                models.SignInCredential(
+                    user_id=new_user.id,
+                    full_name="Demo User",
+                    email="demo@bakukart.az",
+                    bakikart_id="BK-DEMO-100",
+                    phone="+994500000000",
+                    password="demo123",
+                )
+            )
             
             coupons = [
                 models.Coupon(title="Espresso Baku", description="Free Flat White", cost_points=150, partner_name="Espresso Baku"),
@@ -64,7 +74,18 @@ def startup_populate():
             if not demo_user.wallet:
                 db.add(models.Wallet(user_id=demo_user.id, points=1250, co2_saved=4.2, peak_crowds_avoided=12))
             if not demo_user.card_balance:
-                db.add(models.CardBalance(user_id=demo_user.id, amount_azn=15.0))
+                db.add(models.CardBalance(user_id=demo_user.id, amount_azn=100.0))
+            if not demo_user.sign_in_credential:
+                db.add(
+                    models.SignInCredential(
+                        user_id=demo_user.id,
+                        full_name=demo_user.full_name or "Demo User",
+                        email=demo_user.email,
+                        bakikart_id="BK-DEMO-100",
+                        phone="+994500000000",
+                        password="demo123",
+                    )
+                )
             db.commit()
 
         location_service.ensure_seeded_stops(db)
@@ -96,10 +117,24 @@ class JourneyDecisionRequest(BaseModel):
     route: dict
     selected_time: Optional[str] = None
     waited: bool = False
+    wait_skipped_demo: bool = False
     wait_minutes: int = 15
     wait_session_id: Optional[str] = None
     fare_paid: bool = False
     paid_amount_azn: Optional[float] = None
+
+
+class RegisterRequest(BaseModel):
+    full_name: str
+    email: str
+    bakikart_id: str
+    phone: Optional[str] = None
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 
 def is_rush_hour(time_str: Optional[str]) -> bool:
@@ -131,6 +166,18 @@ def _resolve_selection_bonus(route: dict) -> int:
     return int(route.get("bonus_points", 0) or 0)
 
 
+def _get_user_by_email(db: Session, email: Optional[str]) -> models.User:
+    if email:
+        credential = (
+            db.query(models.SignInCredential)
+            .filter(models.SignInCredential.email == email.strip().lower())
+            .first()
+        )
+        if credential:
+            return db.query(models.User).filter(models.User.id == credential.user_id).first()
+    return db.query(models.User).first()
+
+
 @app.post("/journey/decision")
 async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).first()
@@ -158,17 +205,20 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
     wait_bonus_points = 0
     wait_bonus_message = ""
     if payload.waited:
-        if not payload.wait_session_id:
+        if payload.wait_skipped_demo:
+            wait_bonus_points = waiting_bonus_service.extra_wait_bonus_points
+            wait_bonus_message = "Demo wait skip aktivdir."
+        elif not payload.wait_session_id:
             raise HTTPException(status_code=400, detail="Gözləmə bonus session tapılmadı. Yenidən route seçin.")
-
-        verified, wait_bonus_message, wait_bonus_points = waiting_bonus_service.verify_wait_bonus(
-            db=db,
-            user_id=user.id,
-            wait_session_id=payload.wait_session_id,
-            route=payload.route,
-        )
-        if not verified:
-            raise HTTPException(status_code=400, detail=wait_bonus_message)
+        else:
+            verified, wait_bonus_message, wait_bonus_points = waiting_bonus_service.verify_wait_bonus(
+                db=db,
+                user_id=user.id,
+                wait_session_id=payload.wait_session_id,
+                route=payload.route,
+            )
+            if not verified:
+                raise HTTPException(status_code=400, detail=wait_bonus_message)
 
     # Fare deduction is handled by /api/v1/payments/* endpoints.
     if not payload.fare_paid:
@@ -197,6 +247,7 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
             "waited": payload.waited,
             "wait_minutes": payload.wait_minutes,
             "wait_session_id": payload.wait_session_id,
+            "wait_skipped_demo": payload.wait_skipped_demo,
             "selection_bonus_points": route_bonus,
             "wait_bonus_points": wait_bonus_points,
             "fare_paid": payload.fare_paid,
@@ -250,9 +301,105 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         ),
     }
 
+
+@app.post("/auth/register")
+async def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    normalized_email = payload.email.strip().lower()
+    existing_credential = (
+        db.query(models.SignInCredential)
+        .filter(models.SignInCredential.email == normalized_email)
+        .first()
+    )
+    if existing_credential:
+        raise HTTPException(status_code=409, detail="Bu email ilə artıq qeydiyyat var. Login edin.")
+
+    existing_user = db.query(models.User).filter(models.User.email == normalized_email).first()
+    if existing_user:
+        raise HTTPException(status_code=409, detail="Bu email ilə artıq hesab mövcuddur. Login edin.")
+
+    user = models.User(full_name=payload.full_name, email=normalized_email)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    db.add(models.Wallet(user_id=user.id, points=0, co2_saved=0.0, peak_crowds_avoided=0))
+    db.add(models.CardBalance(user_id=user.id, amount_azn=100.0))
+    db.add(
+        models.SignInCredential(
+            user_id=user.id,
+            full_name=payload.full_name,
+            email=normalized_email,
+            bakikart_id=payload.bakikart_id,
+            phone=payload.phone,
+            password=payload.password,
+        )
+    )
+
+    db.commit()
+    db.refresh(user)
+    if user.wallet:
+        db.refresh(user.wallet)
+    if user.card_balance:
+        db.refresh(user.card_balance)
+
+    return {
+        "message": "Register successful",
+        "profile": {
+            "full_name": user.full_name,
+            "email": user.email,
+            "wallet": {
+                "points": user.wallet.points if user.wallet else 0,
+                "bakikart_balance": user.card_balance.amount_azn if user.card_balance else 0.0,
+                "co2_saved": user.wallet.co2_saved if user.wallet else 0.0,
+                "peak_crowds_avoided": user.wallet.peak_crowds_avoided if user.wallet else 0,
+            },
+        },
+    }
+
+
+@app.post("/auth/login")
+async def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    normalized_email = payload.email.strip().lower()
+    credential = (
+        db.query(models.SignInCredential)
+        .filter(models.SignInCredential.email == normalized_email)
+        .first()
+    )
+    if not credential:
+        raise HTTPException(status_code=404, detail="Hesab tapılmadı. Əvvəlcə qeydiyyatdan keçin.")
+    if credential.password != payload.password:
+        raise HTTPException(status_code=401, detail="Email və ya şifrə yanlışdır.")
+
+    user = db.query(models.User).filter(models.User.id == credential.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found for login")
+
+    if not user.wallet:
+        db.add(models.Wallet(user_id=user.id, points=0, co2_saved=0.0, peak_crowds_avoided=0))
+    if not user.card_balance:
+        db.add(models.CardBalance(user_id=user.id, amount_azn=100.0))
+    db.commit()
+    db.refresh(user)
+    db.refresh(user.wallet)
+    db.refresh(user.card_balance)
+
+    return {
+        "message": "Login successful",
+        "profile": {
+            "full_name": user.full_name,
+            "email": user.email,
+            "wallet": {
+                "points": user.wallet.points,
+                "bakikart_balance": user.card_balance.amount_azn,
+                "co2_saved": user.wallet.co2_saved,
+                "peak_crowds_avoided": user.wallet.peak_crowds_avoided,
+            },
+        },
+    }
+
 @app.get("/user/profile")
-async def get_profile(db: Session = Depends(get_db)):
-    user = db.query(models.User).first() # Just get the first user for demo
+async def get_profile(email: Optional[str] = None, db: Session = Depends(get_db)):
+    user = _get_user_by_email(db, email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     

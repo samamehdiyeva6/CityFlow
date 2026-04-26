@@ -1,7 +1,7 @@
 import React from 'react';
 import { Train, Map, Gift, Shield, User } from 'lucide-react';
 
-const Navbar = ({ currentPage, onNavigate, points }) => {
+const Navbar = ({ currentPage, onNavigate, points, isSignedIn, onAuthAction }) => {
   const navItems = [
     { id: 'landing', label: 'How it works', icon: null },
     { id: 'planner', label: 'Route Planner', icon: Map },
@@ -40,8 +40,11 @@ const Navbar = ({ currentPage, onNavigate, points }) => {
         <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200">
           <User size={20} className="text-gray-600" />
         </div>
-        <button className="bg-black text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors">
-          Get Started
+        <button
+          onClick={onAuthAction}
+          className="bg-black text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+        >
+          {isSignedIn ? 'Log out' : 'Sign In'}
         </button>
       </div>
     </nav>
