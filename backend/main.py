@@ -1,14 +1,21 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Optional
 from pydantic import BaseModel
 import datetime
 
+from controllers.location_controller import router as location_router
+from controllers.payment_controller import router as payment_router
+from controllers.route_controller import router as route_router
+from controllers.trip_controller import router as trip_router
+from controllers.waiting_controller import router as waiting_router
 from database import engine, get_db
 import models
 from services.data_service import data_service
+from services.location_service import location_service
 from services.routing_service import routing_service
+from services.waiting_bonus_service import waiting_bonus_service
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -22,37 +29,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(location_router)
+app.include_router(payment_router)
+app.include_router(route_router)
+app.include_router(trip_router)
+app.include_router(waiting_router)
+
 # Initialize Demo User if not exists
 @app.on_event("startup")
 def startup_populate():
     db = next(get_db())
-    demo_user = db.query(models.User).filter(models.User.email == "demo@bakukart.az").first()
-    if not demo_user:
-        new_user = models.User(full_name="Demo User", email="demo@bakukart.az")
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-        
-        wallet = models.Wallet(user_id=new_user.id, points=1250, co2_saved=4.2, peak_crowds_avoided=12)
-        db.add(wallet)
+    try:
+        demo_user = db.query(models.User).filter(models.User.email == "demo@bakukart.az").first()
+        if not demo_user:
+            new_user = models.User(full_name="Demo User", email="demo@bakukart.az")
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            
+            wallet = models.Wallet(user_id=new_user.id, points=1250, co2_saved=4.2, peak_crowds_avoided=12)
+            db.add(wallet)
 
-        card_balance = models.CardBalance(user_id=new_user.id, amount_azn=15.0)
-        db.add(card_balance)
-        
-        # Add some coupons
-        coupons = [
-            models.Coupon(title="Espresso Baku", description="Free Flat White", cost_points=150, partner_name="Espresso Baku"),
-            models.Coupon(title="Baku Metro", description="10-Trip Transit Pass", cost_points=800, partner_name="Baku Metro"),
-            models.Coupon(title="BookZone Library", description="Any Paperback -25%", cost_points=300, partner_name="BookZone Library"),
-        ]
-        db.add_all(coupons)
-        db.commit()
-    else:
-        if not demo_user.wallet:
-            db.add(models.Wallet(user_id=demo_user.id, points=1250, co2_saved=4.2, peak_crowds_avoided=12))
-        if not demo_user.card_balance:
-            db.add(models.CardBalance(user_id=demo_user.id, amount_azn=15.0))
-        db.commit()
+            card_balance = models.CardBalance(user_id=new_user.id, amount_azn=15.0)
+            db.add(card_balance)
+            
+            coupons = [
+                models.Coupon(title="Espresso Baku", description="Free Flat White", cost_points=150, partner_name="Espresso Baku"),
+                models.Coupon(title="Baku Metro", description="10-Trip Transit Pass", cost_points=800, partner_name="Baku Metro"),
+                models.Coupon(title="BookZone Library", description="Any Paperback -25%", cost_points=300, partner_name="BookZone Library"),
+            ]
+            db.add_all(coupons)
+            db.commit()
+        else:
+            if not demo_user.wallet:
+                db.add(models.Wallet(user_id=demo_user.id, points=1250, co2_saved=4.2, peak_crowds_avoided=12))
+            if not demo_user.card_balance:
+                db.add(models.CardBalance(user_id=demo_user.id, amount_azn=15.0))
+            db.commit()
+
+        location_service.ensure_seeded_stops(db)
+    finally:
+        db.close()
 
 @app.get("/")
 async def root():
@@ -60,7 +77,7 @@ async def root():
 
 @app.get("/locations")
 async def get_locations():
-    return data_service.get_all_locations()
+    return location_service.get_all_location_options()
 
 
 @app.get("/traffic")
@@ -68,9 +85,9 @@ async def get_traffic():
     return data_service.get_traffic_data()
 
 @app.get("/plan")
-async def plan_journey(start: str, end: str, time: Optional[str] = None):
-    routes = await routing_service.find_routes(start, end, time)
-    return routes
+async def plan_journey(start: str, end: str, time: Optional[str] = None, db: Session = Depends(get_db)):
+    planned = await routing_service.plan_routes(start_name=start, end_name=end, desired_time=time, db=db)
+    return planned["recommended_routes"]
 
 
 class JourneyDecisionRequest(BaseModel):
@@ -80,6 +97,7 @@ class JourneyDecisionRequest(BaseModel):
     selected_time: Optional[str] = None
     waited: bool = False
     wait_minutes: int = 15
+    wait_session_id: Optional[str] = None
 
 
 def is_rush_hour(time_str: Optional[str]) -> bool:
@@ -104,6 +122,13 @@ def is_rush_hour(time_str: Optional[str]) -> bool:
     return False
 
 
+def _resolve_selection_bonus(route: dict) -> int:
+    reward_preview = route.get("reward_preview") or {}
+    if reward_preview:
+        return int(reward_preview.get("selection_bonus_points", 0) or 0)
+    return int(route.get("bonus_points", 0) or 0)
+
+
 @app.post("/journey/decision")
 async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).first()
@@ -123,20 +148,35 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
 
     wallet = user.wallet
     card_balance = user.card_balance
-    route_bonus = int(payload.route.get("bonus_points", 0) or 0)
+    route_bonus = _resolve_selection_bonus(payload.route)
     route_cost = float(payload.route.get("cost", 0.6) or 0.6)
     rush = is_rush_hour(payload.selected_time)
+
+    wait_bonus_points = 0
+    wait_bonus_message = ""
+    if payload.waited:
+        if not payload.wait_session_id:
+            raise HTTPException(status_code=400, detail="Gözləmə bonus session tapılmadı. Yenidən route seçin.")
+
+        verified, wait_bonus_message, wait_bonus_points = waiting_bonus_service.verify_wait_bonus(
+            db=db,
+            user_id=user.id,
+            wait_session_id=payload.wait_session_id,
+            route=payload.route,
+        )
+        if not verified:
+            raise HTTPException(status_code=400, detail=wait_bonus_message)
 
     if card_balance.amount_azn < route_cost:
         raise HTTPException(status_code=400, detail="Bakikart balansı kifayət etmir")
 
     card_balance.amount_azn -= route_cost
 
-    # Rule: off-peak payment gives points, peak-hour payment gives no points.
-    earned_points = route_bonus if not rush else 0
+    # Low-density route choice always earns points; verified waiting stacks on top.
+    earned_points = route_bonus + wait_bonus_points
 
     wallet.points += earned_points
-    if not rush:
+    if earned_points > 0:
         wallet.peak_crowds_avoided += 1
 
     journey = models.JourneyHistory(
@@ -151,6 +191,9 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
             "cost_deducted": route_cost,
             "waited": payload.waited,
             "wait_minutes": payload.wait_minutes,
+            "wait_session_id": payload.wait_session_id,
+            "selection_bonus_points": route_bonus,
+            "wait_bonus_points": wait_bonus_points,
         },
     )
     db.add(journey)
@@ -159,12 +202,19 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         tx = models.BonusTransaction(
             wallet_id=wallet.id,
             amount=earned_points,
-            description=f"Off-peak reward (+{earned_points} pts)",
+            description=f"Crowd-aware route reward (+{earned_points} pts)",
         )
         db.add(tx)
 
     db.commit()
     db.refresh(wallet)
+
+    latest_payment = (
+        db.query(models.FareTransaction)
+        .filter(models.FareTransaction.user_id == user.id)
+        .order_by(models.FareTransaction.paid_at.desc())
+        .first()
+    )
 
     return {
         "travel_mode_active": True,
@@ -174,7 +224,15 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         "bakikart_balance": round(card_balance.amount_azn, 2),
         "points_earned": earned_points,
         "wallet_points": wallet.points,
-        "message": "AI tövsiyə olunan off-peak saatda ödəniş etdiniz, bonus qazandınız." if not rush else "Pik saatda ödəniş etdiniz, bonus verilmədi.",
+        "wait_bonus_verified": wait_bonus_points > 0,
+        "fare_payment_recorded": latest_payment is not None,
+        "fare_payment_time": latest_payment.paid_at.isoformat() if latest_payment else None,
+        "fare_payment_stop": latest_payment.validator_stop if latest_payment else None,
+        "message": (
+            f"{wait_bonus_message} AI tövsiyəsinə əməl etdiniz və əlavə bonus qazandınız."
+            if wait_bonus_points > 0 else
+            ("Daha az sıx marşrut seçdiniz və bonus qazandınız." if earned_points > 0 else "Bu seçim üçün bonus hesablanmadı.")
+        ),
     }
 
 @app.get("/user/profile")
@@ -193,6 +251,7 @@ async def get_profile(db: Session = Depends(get_db)):
             "peak_crowds_avoided": user.wallet.peak_crowds_avoided
         },
         "history": user.journeys,
+        "fare_transactions": db.query(models.FareTransaction).filter(models.FareTransaction.user_id == user.id).order_by(models.FareTransaction.paid_at.desc()).all(),
         "coupons": user.coupons
     }
 

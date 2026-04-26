@@ -6,7 +6,10 @@ import unicodedata
 from collections import defaultdict
 
 from services.data_service import data_service
+from services.density_service import density_service
 from services.gemini_service import gemini_service
+from services.location_service import location_service
+from services.waiting_bonus_service import waiting_bonus_service
 
 
 class RoutingService:
@@ -25,7 +28,7 @@ class RoutingService:
         self.edges = defaultdict(list)
         self._build_graph()
 
-    async def find_routes(self, start_name, end_name, desired_time=None):
+    async def find_routes(self, start_name, end_name, desired_time=None, db=None):
         if not self.edges:
             self._build_graph()
 
@@ -59,11 +62,50 @@ class RoutingService:
 
         # Apply rush-hour adjustments and finalize ranking
         for route in matches:
+            self._apply_density_prediction(route, desired_time=desired_time, db=db)
             self._apply_rush_hour_adjustments(route, is_rush)
+            self._enrich_route_labels(route)
 
         deduped = self._dedupe_routes(matches)
         deduped.sort(key=lambda r: (r.get("eta", 9999), r.get("crowding", 100), -r.get("confidence", 0)))
-        return deduped[:3]
+        top_routes = deduped[:3]
+        self._attach_reward_previews(top_routes, desired_time=desired_time, db=db)
+        return top_routes
+
+    async def plan_routes(
+        self,
+        start_name=None,
+        end_name=None,
+        desired_time=None,
+        origin_coords=None,
+        destination_coords=None,
+        db=None,
+    ):
+        if origin_coords:
+            density_service.register_observation(origin_coords[0], origin_coords[1], source="route-plan-origin")
+        if destination_coords:
+            density_service.register_observation(destination_coords[0], destination_coords[1], source="route-plan-destination")
+
+        origin_stop = self._resolve_input_stop(start_name, origin_coords)
+        destination_stop = self._resolve_input_stop(end_name, destination_coords)
+
+        if origin_coords or destination_coords:
+            routes = self._find_coordinate_aware_routes(
+                origin_stop=origin_stop,
+                destination_stop=destination_stop,
+                origin_coords=origin_coords,
+                destination_coords=destination_coords,
+                desired_time=desired_time,
+                db=db,
+            )
+        else:
+            routes = await self.find_routes(origin_stop["name"], destination_stop["name"], desired_time, db=db)
+
+        return {
+            "origin": origin_stop,
+            "destination": destination_stop,
+            "recommended_routes": routes,
+        }
 
     def _build_graph(self):
         self.node_coords.clear()
@@ -112,31 +154,37 @@ class RoutingService:
                 }
                 self.edges[end].append((start, reverse_edge))
 
-        # Build metro sequential graph from station order
-        stations = self.metro_data.get("stations", [])
+        # Build metro graph from simplified line topology instead of raw array order.
+        stations = {station.get("name"): station for station in self.metro_data.get("stations", []) if station.get("name")}
         fare = float(self.metro_data.get("fare", 0.6))
-        for i in range(len(stations) - 1):
-            a = stations[i]
-            b = stations[i + 1]
-            a_name = a.get("name")
-            b_name = b.get("name")
-            if not a_name or not b_name:
-                continue
+        metro_lines = [
+            ["20 Yanvar", "Memar Əcəmi", "Gənclik", "28 May", "Nərimanov", "Koroğlu", "Əhmədli", "Neftçilər"],
+            ["28 May", "Sahil", "İçərişəhər"],
+        ]
+        edge_seq = 1
+        for line in metro_lines:
+            for i in range(len(line) - 1):
+                a_name = line[i]
+                b_name = line[i + 1]
+                a = stations.get(a_name)
+                b = stations.get(b_name)
+                if not a or not b:
+                    continue
 
-            seg_km = self._distance_km(a.get("lat"), a.get("lng"), b.get("lat"), b.get("lng"))
-            eta = max(3, int(seg_km * 3.2 + 2))
-            path = [[a.get("lat"), a.get("lng")], [b.get("lat"), b.get("lng")]]
-
-            edge = {
-                "route_id": f"M{i+1}",
-                "source": "metro",
-                "mode": "Metro",
-                "eta": eta,
-                "cost": fare,
-                "path": path,
-            }
-            self.edges[a_name].append((b_name, edge))
-            self.edges[b_name].append((a_name, {**edge, "path": list(reversed(path))}))
+                seg_km = self._distance_km(a.get("lat"), a.get("lng"), b.get("lat"), b.get("lng"))
+                eta = max(3, int(seg_km * 3.2 + 2))
+                path = [[a.get("lat"), a.get("lng")], [b.get("lat"), b.get("lng")]]
+                edge = {
+                    "route_id": f"M{edge_seq}",
+                    "source": "metro",
+                    "mode": "Metro",
+                    "eta": eta,
+                    "cost": fare,
+                    "path": path,
+                }
+                self.edges[a_name].append((b_name, edge))
+                self.edges[b_name].append((a_name, {**edge, "path": list(reversed(path))}))
+                edge_seq += 1
 
     def _find_direct_routes(self, start, end):
         direct = []
@@ -161,7 +209,7 @@ class RoutingService:
 
         return direct
 
-    def _find_graph_route(self, start, end):
+    def _find_graph_route(self, start, end, include_segments=False):
         if start == end:
             coord = self._get_coord(start)
             return {
@@ -235,7 +283,7 @@ class RoutingService:
         route_number = bus_ids[0] if bus_ids else "M-Combined"
         line_name = "Metro Line" if metro_count else f"Bus {route_number}"
 
-        return {
+        route = {
             "id": "network_best",
             "type": route_type,
             "start": start,
@@ -250,6 +298,9 @@ class RoutingService:
             "route_number": route_number,
             "line_name": line_name,
         }
+        if include_segments:
+            route["segments"] = self._serialize_segments(segments)
+        return route
 
     def _metro_direct_option(self, start, end):
         stations = {self._canonical_name(s["name"]): s for s in self.metro_data.get("stations", []) if s.get("name")}
@@ -373,6 +424,287 @@ class RoutingService:
         route["eta"] = max(1, int(route.get("eta", 20) * 1.25))
         route["bonus_points"] = int(route.get("bonus_points", 0) + 40)
         route["explanation"] = "Pik saat təsiri nəzərə alındı: gecikmiş çıxış bonusu ilə daha rahat səfər mümkündür."
+
+    def _apply_density_prediction(self, route, desired_time=None, db=None):
+        density = density_service.estimate_route_density(route, desired_time=desired_time, db=db)
+        route["density_prediction"] = density
+        route["crowding"] = density["score"]
+        route["confidence"] = density["confidence"]
+
+    def _enrich_route_labels(self, route):
+        crowding = int(route.get("crowding", 0) or 0)
+        if crowding >= 70:
+            crowd_level = "HIGH"
+        elif crowding >= 40:
+            crowd_level = "MEDIUM"
+        else:
+            crowd_level = "LOW"
+
+        route["crowd_level"] = crowd_level
+        route["transport_mode"] = route.get("type", "Bus")
+        route["recommended"] = route.get("id") in {"ai_route_1", "network_best"} or route.get("confidence", 0) >= 94
+
+    def _attach_reward_previews(self, routes, desired_time=None, db=None):
+        if not routes:
+            return
+
+        ranked_by_crowding = sorted(
+            routes,
+            key=lambda route: (
+                route.get("crowding", 100),
+                route.get("eta", 9999),
+                -route.get("confidence", 0),
+            ),
+        )
+        crowd_rank_map = {id(route): rank for rank, route in enumerate(ranked_by_crowding, start=1)}
+
+        for route in routes:
+            crowd_rank = crowd_rank_map[id(route)]
+            crowding = int(route.get("crowding", 0) or 0)
+            selection_bonus = self._selection_bonus_points(crowd_rank, crowding, desired_time)
+            waiting_preview = waiting_bonus_service.preview_wait_bonus(route=route, selected_time=desired_time, db=db)
+
+            route["bonus_points"] = selection_bonus
+            route["reward_preview"] = {
+                "selection_bonus_points": selection_bonus,
+                "crowd_rank": crowd_rank,
+                "crowd_level": route.get("crowd_level"),
+                "wait_bonus_points": waiting_preview["bonus_points"] if waiting_preview["should_wait"] else 0,
+                "total_possible_points": selection_bonus + (
+                    waiting_preview["bonus_points"] if waiting_preview["should_wait"] else 0
+                ),
+                "reason": self._build_reward_reason(crowd_rank, crowding, waiting_preview["should_wait"]),
+                "wait_strategy": waiting_preview,
+            }
+
+    def _selection_bonus_points(self, crowd_rank, crowding, desired_time=None):
+        if crowd_rank == 1:
+            points = 30
+        elif crowd_rank == 2:
+            points = 18
+        else:
+            points = 10
+
+        if crowding <= 35:
+            points += 12
+        elif crowding <= 55:
+            points += 6
+
+        if self._is_rush_hour(desired_time):
+            points += 8
+
+        return points
+
+    def _build_reward_reason(self, crowd_rank, crowding, should_wait):
+        parts = []
+        if crowd_rank == 1:
+            parts.append("Ən az sıx təklifdir")
+        elif crowd_rank == 2:
+            parts.append("Alternativlərdən daha rahat variantdır")
+        else:
+            parts.append("Standart marşrut bonusu verir")
+
+        if crowding <= 35:
+            parts.append("Aşağı sıxlıq səbəbilə əlavə xal qazandırır")
+        elif crowding <= 55:
+            parts.append("Orta sıxlıq olsa da daha balanslı seçim sayılır")
+
+        if should_wait:
+            parts.append("Növbəti avtobusu gözləsən əlavə waiting bonus da aça bilər")
+
+        return ". ".join(parts) + "."
+
+    def _find_coordinate_aware_routes(self, origin_stop, destination_stop, origin_coords=None, destination_coords=None, desired_time=None, db=None):
+        origin_candidates = self._build_origin_destination_candidates(origin_stop, origin_coords)
+        destination_candidates = self._build_origin_destination_candidates(destination_stop, destination_coords)
+
+        matches = []
+        for origin_candidate in origin_candidates:
+            for destination_candidate in destination_candidates:
+                base_route = self._find_graph_route(
+                    origin_candidate["name"],
+                    destination_candidate["name"],
+                    include_segments=True,
+                )
+                if not base_route:
+                    continue
+                matches.append(
+                    self._decorate_coordinate_route(
+                        base_route=base_route,
+                        origin_candidate=origin_candidate,
+                        destination_candidate=destination_candidate,
+                        origin_coords=origin_coords,
+                        destination_coords=destination_coords,
+                    )
+                )
+
+        if not matches:
+            fallback = self._build_fallback_route(origin_stop["name"], destination_stop["name"])
+            self._apply_density_prediction(fallback, desired_time=desired_time, db=db)
+            self._enrich_route_labels(fallback)
+            self._attach_reward_previews([fallback], desired_time=desired_time, db=db)
+            return [fallback]
+
+        is_rush = self._is_rush_hour(desired_time)
+        for route in matches:
+            self._apply_density_prediction(route, desired_time=desired_time, db=db)
+            self._apply_rush_hour_adjustments(route, is_rush)
+            self._enrich_route_labels(route)
+
+        deduped = self._dedupe_routes(matches)
+        deduped.sort(
+            key=lambda r: (
+                r.get("eta", 9999),
+                r.get("walking_minutes_total", 9999),
+                -r.get("confidence", 0),
+            )
+        )
+        top_routes = deduped[:3]
+        self._attach_reward_previews(top_routes, desired_time=desired_time, db=db)
+        return top_routes
+
+    def _build_origin_destination_candidates(self, stop_payload, coords=None, limit=4):
+        if not coords:
+            return [stop_payload]
+
+        lat, lon = coords
+        stops = []
+        seen = set()
+        for name, coord in self.node_coords.items():
+            canonical_name = self.name_index.get(name)
+            if not canonical_name or canonical_name in seen:
+                continue
+            seen.add(canonical_name)
+            distance_meters = location_service.haversine_distance_meters(lat, lon, coord[0], coord[1])
+            stops.append(
+                {
+                    "name": canonical_name,
+                    "lat": coord[0],
+                    "lon": coord[1],
+                    "distance_meters": round(distance_meters, 1),
+                    "available_routes": location_service.get_available_routes_for_stop(canonical_name),
+                    "type": "METRO" if self._is_metro_station(canonical_name) else "BUS",
+                }
+            )
+
+        ranked = sorted(stops, key=lambda stop: (stop["distance_meters"], stop["type"] != "METRO"))
+        return ranked[:limit] if ranked else [stop_payload]
+
+    def _decorate_coordinate_route(self, base_route, origin_candidate, destination_candidate, origin_coords=None, destination_coords=None):
+        access_minutes = self._walking_eta_minutes(origin_candidate.get("distance_meters", 0))
+        egress_minutes = self._walking_eta_minutes(destination_candidate.get("distance_meters", 0))
+        path = list(base_route.get("path") or [])
+        segments = list(base_route.get("segments") or [])
+
+        origin_point = None
+        if origin_candidate.get("distance_meters", 0) > 0:
+            origin_point = [origin_coords[0], origin_coords[1]] if origin_coords else [origin_candidate["lat"], origin_candidate["lon"]]
+            path = [origin_point] + path
+            segments = [
+                {
+                    "mode": "Walk",
+                    "from": "Current Location",
+                    "to": origin_candidate["name"],
+                    "eta": access_minutes,
+                    "distance_meters": origin_candidate.get("distance_meters", 0),
+                }
+            ] + segments
+
+        if destination_candidate.get("distance_meters", 0) > 0:
+            destination_point = [destination_coords[0], destination_coords[1]] if destination_coords else [destination_candidate["lat"], destination_candidate["lon"]]
+            path = path + [destination_point]
+            segments = segments + [
+                {
+                    "mode": "Walk",
+                    "from": destination_candidate["name"],
+                    "to": "Destination Area",
+                    "eta": egress_minutes,
+                    "distance_meters": destination_candidate.get("distance_meters", 0),
+                }
+            ]
+
+        total_eta = int(base_route.get("eta", 0) + access_minutes + egress_minutes)
+        walking_total = access_minutes + egress_minutes
+        confidence = max(62, int(base_route.get("confidence", 82) - walking_total * 0.8))
+
+        return {
+            **base_route,
+            "id": f"{base_route.get('id')}_{self._canonical_name(origin_candidate['name'])}_{self._canonical_name(destination_candidate['name'])}",
+            "type": f"Walk + {base_route.get('type', 'Transit')}",
+            "eta": total_eta,
+            "path": path,
+            "segments": segments,
+            "confidence": confidence,
+            "access_stop": origin_candidate["name"],
+            "egress_stop": destination_candidate["name"],
+            "walking_minutes_total": walking_total,
+            "walking_distance_meters": round(
+                origin_candidate.get("distance_meters", 0) + destination_candidate.get("distance_meters", 0), 1
+            ),
+            "explanation": (
+                f"Cari lokasiyadan {origin_candidate['name']} dayanacağına piyada keçid, sonra "
+                f"{origin_candidate['name']} -> {destination_candidate['name']} multimodal marşrutu hesablandı."
+            ),
+        }
+
+    def _serialize_segments(self, segments):
+        serialized = []
+        for from_node, to_node, edge in segments:
+            serialized.append(
+                {
+                    "mode": edge.get("mode", "Bus"),
+                    "from": from_node,
+                    "to": to_node,
+                    "eta": edge.get("eta", 0),
+                    "cost": edge.get("cost", 0),
+                    "route_id": edge.get("route_id"),
+                }
+            )
+        return serialized
+
+    def _walking_eta_minutes(self, distance_meters):
+        meters = float(distance_meters or 0)
+        if meters <= 1:
+            return 0
+        return max(1, int(round(meters / 83.0)))
+
+    def _is_metro_station(self, name):
+        return any(self._canonical_name(station.get("name", "")) == self._canonical_name(name) for station in self.metro_data.get("stations", []))
+
+    def _resolve_input_stop(self, name=None, coords=None):
+        if name:
+            coord = self._get_coord(name)
+            resolved_name = self._resolve_name(name)
+            available_routes = location_service.get_available_routes_for_stop(resolved_name)
+            payload = {
+                "name": resolved_name,
+                "lat": coord[0] if coord else None,
+                "lon": coord[1] if coord else None,
+                "distance_meters": 0.0,
+                "available_routes": available_routes,
+            }
+            if resolved_name in {station.get("name") for station in self.metro_data.get("stations", [])}:
+                payload["type"] = "METRO"
+            else:
+                payload["type"] = "BUS"
+            return payload
+
+        if coords:
+            lat, lon = coords
+            nearest = self._build_origin_destination_candidates({"name": "Unknown"}, coords, limit=1)[0]
+            return {
+                **nearest,
+                "available_routes": location_service.get_available_routes_for_stop(nearest["name"]),
+            }
+
+        return {
+            "name": "Unknown",
+            "lat": None,
+            "lon": None,
+            "type": "BUS",
+            "distance_meters": None,
+            "available_routes": [],
+        }
 
     def _dedupe_routes(self, routes):
         seen = set()

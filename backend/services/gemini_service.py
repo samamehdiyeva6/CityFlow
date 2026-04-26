@@ -10,10 +10,17 @@ class GeminiService:
     def __init__(self):
         load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
         api_key = os.getenv("GEMINI_API_KEY")
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.enabled = bool(api_key) and os.getenv("ENABLE_GEMINI_SUGGESTIONS", "0") == "1"
+        self.model = None
+
+        if self.enabled:
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     async def get_ai_suggestions(self, start_name, end_name, time_str):
+        if not self.enabled or not self.model:
+            return []
+
         all_routes = data_service.get_all_routes()
         locations = data_service.get_all_locations()
         traffic = data_service.get_traffic_data()

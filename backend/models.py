@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from database import Base
 import datetime
 
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -76,3 +77,63 @@ class UserCoupon(Base):
     
     user = relationship("User", back_populates="coupons")
     coupon = relationship("Coupon")
+
+
+class Stop(Base):
+    __tablename__ = "stops"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    type = Column(String, nullable=False)  # BUS / METRO
+
+
+class RealtimeLocationPing(Base):
+    __tablename__ = "realtime_location_pings"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    session_id = Column(String, index=True, nullable=False)
+    route_id = Column(String, nullable=True)
+    route_number = Column(String, nullable=True)
+    trip_status = Column(String, default="ACTIVE")
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    accuracy_m = Column(Float, nullable=True)
+    speed_mps = Column(Float, nullable=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class WaitBonusSession(Base):
+    __tablename__ = "wait_bonus_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    session_id = Column(String, unique=True, index=True, nullable=False)
+    route_id = Column(String, nullable=True)
+    route_number = Column(String, nullable=True)
+    start_location = Column(String, nullable=True)
+    end_location = Column(String, nullable=True)
+    origin_lat = Column(Float, nullable=False)
+    origin_lon = Column(Float, nullable=False)
+    current_density_score = Column(Integer, nullable=False)
+    projected_density_score = Column(Integer, nullable=False)
+    suggested_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    recommended_departure_at = Column(DateTime, nullable=False)
+    status = Column(String, default="PENDING", nullable=False)
+
+
+class FareTransaction(Base):
+    __tablename__ = "fare_transactions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    session_id = Column(String, index=True, nullable=False)
+    payment_method = Column(String, default="NFC", nullable=False)
+    route_id = Column(String, nullable=True)
+    route_number = Column(String, nullable=True)
+    validator_stop = Column(String, nullable=True)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    amount_azn = Column(Float, nullable=False)
+    paid_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    boarding_status = Column(String, default="PAID", nullable=False)
+    matched_wait_session_id = Column(String, nullable=True)
+    matched_wait_minutes = Column(Integer, nullable=True)
