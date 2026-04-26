@@ -98,6 +98,8 @@ class JourneyDecisionRequest(BaseModel):
     waited: bool = False
     wait_minutes: int = 15
     wait_session_id: Optional[str] = None
+    fare_paid: bool = False
+    paid_amount_azn: Optional[float] = None
 
 
 def is_rush_hour(time_str: Optional[str]) -> bool:
@@ -147,10 +149,11 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         db.refresh(user)
 
     wallet = user.wallet
-    card_balance = user.card_balance
     route_bonus = _resolve_selection_bonus(payload.route)
     route_cost = float(payload.route.get("cost", 0.6) or 0.6)
     rush = is_rush_hour(payload.selected_time)
+    crowding = int(payload.route.get("crowding", 100) or 100)
+    low_density_selected = crowding <= 55
 
     wait_bonus_points = 0
     wait_bonus_message = ""
@@ -167,13 +170,15 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         if not verified:
             raise HTTPException(status_code=400, detail=wait_bonus_message)
 
-    if card_balance.amount_azn < route_cost:
-        raise HTTPException(status_code=400, detail="Bakikart balansı kifayət etmir")
-
-    card_balance.amount_azn -= route_cost
-
-    # Low-density route choice always earns points; verified waiting stacks on top.
-    earned_points = route_bonus + wait_bonus_points
+    # Fare deduction is handled by /api/v1/payments/* endpoints.
+    if not payload.fare_paid:
+        earned_points = 0
+    elif low_density_selected:
+        earned_points = route_bonus
+    elif wait_bonus_points > 0:
+        earned_points = wait_bonus_points
+    else:
+        earned_points = 0
 
     wallet.points += earned_points
     if earned_points > 0:
@@ -188,12 +193,14 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
             "selected_route": payload.route,
             "selected_time": payload.selected_time,
             "rush_hour": rush,
-            "cost_deducted": route_cost,
+            "cost_deducted": float(payload.paid_amount_azn or route_cost),
             "waited": payload.waited,
             "wait_minutes": payload.wait_minutes,
             "wait_session_id": payload.wait_session_id,
             "selection_bonus_points": route_bonus,
             "wait_bonus_points": wait_bonus_points,
+            "fare_paid": payload.fare_paid,
+            "low_density_selected": low_density_selected,
         },
     )
     db.add(journey)
@@ -220,8 +227,8 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         "travel_mode_active": True,
         "rush_hour": rush,
         "waited": payload.waited,
-        "cost_deducted": round(route_cost, 2),
-        "bakikart_balance": round(card_balance.amount_azn, 2),
+        "cost_deducted": round(float(payload.paid_amount_azn or route_cost), 2),
+        "bakikart_balance": round(user.card_balance.amount_azn, 2),
         "points_earned": earned_points,
         "wallet_points": wallet.points,
         "wait_bonus_verified": wait_bonus_points > 0,
@@ -231,7 +238,15 @@ async def journey_decision(payload: JourneyDecisionRequest, db: Session = Depend
         "message": (
             f"{wait_bonus_message} AI tövsiyəsinə əməl etdiniz və əlavə bonus qazandınız."
             if wait_bonus_points > 0 else
-            ("Daha az sıx marşrut seçdiniz və bonus qazandınız." if earned_points > 0 else "Bu seçim üçün bonus hesablanmadı.")
+            (
+                "Daha az sıx marşrut seçdiniz və bonus qazandınız."
+                if earned_points > 0 else
+                (
+                    "Ödəniş tamamlanmadan bonus hesablanmır."
+                    if not payload.fare_paid else
+                    "Bu seçim az sıxlıq qaydasına düşmədiyi üçün bonus hesablanmadı."
+                )
+            )
         ),
     }
 

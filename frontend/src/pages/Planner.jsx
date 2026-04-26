@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { Search, MapPin, Clock, Info, Zap, AlertTriangle, Train } from 'lucide-react';
+import { Search, MapPin, Clock, Info, Zap, AlertTriangle, Train, QrCode, SkipForward, CheckCircle2 } from 'lucide-react';
 import { Circle, CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -10,6 +10,11 @@ const BAKU_CENTER = [40.4093, 49.8671];
 const DEFAULT_ZOOM = 12;
 const ROUTE_COLORS = ['#111111', '#7c3aed', '#f97316'];
 const CURRENT_LOCATION_OPTION = '__CURRENT_LOCATION__';
+
+const getCurrentTimeHHMM = () => {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+};
 
 const createDivIcon = (label, variant) =>
   L.divIcon({
@@ -61,7 +66,7 @@ const MapController = ({ actionToken, focusPoint, bounds }) => {
 const Planner = () => {
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
-  const [time, setTime] = useState('08:30');
+  const [time, setTime] = useState(getCurrentTimeHHMM);
   const [routes, setRoutes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -72,8 +77,22 @@ const Planner = () => {
   const [decisionLoading, setDecisionLoading] = useState(false);
   const [decisionMessage, setDecisionMessage] = useState('');
   const [walletPoints, setWalletPoints] = useState(null);
+  const [bakikartBalance, setBakikartBalance] = useState(null);
   const [pendingPeakDecision, setPendingPeakDecision] = useState(false);
   const [alternativeBusLabel, setAlternativeBusLabel] = useState('');
+  const [paymentSteps, setPaymentSteps] = useState([]);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [currentStepPaid, setCurrentStepPaid] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState('');
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [lastQrCode, setLastQrCode] = useState('');
+  const [journeyTimerSec, setJourneyTimerSec] = useState(0);
+  const [journeyStarted, setJourneyStarted] = useState(false);
+  const [journeyCompleted, setJourneyCompleted] = useState(false);
+  const [selectedJourneyTime, setSelectedJourneyTime] = useState(getCurrentTimeHHMM);
+  const [waitedForBonus, setWaitedForBonus] = useState(false);
+  const [activeWaitSessionId, setActiveWaitSessionId] = useState(null);
+  const [totalPaidAmount, setTotalPaidAmount] = useState(0);
   const [mapAction, setMapAction] = useState('');
   const [userLocation, setUserLocation] = useState(null);
   const [nearestTransit, setNearestTransit] = useState(null);
@@ -98,7 +117,8 @@ const Planner = () => {
   }, []);
 
   useEffect(() => {
-    if (!waitSuggestion?.recommendedDepartureAt) {
+    const departureAt = waitSuggestion?.recommended_departure_at || waitSuggestion?.recommendedDepartureAt;
+    if (!departureAt) {
       setWaitCountdown(0);
       return undefined;
     }
@@ -106,7 +126,7 @@ const Planner = () => {
     const tick = () => {
       const remaining = Math.max(
         0,
-        Math.floor((new Date(waitSuggestion.recommendedDepartureAt).getTime() - Date.now()) / 1000)
+        Math.floor((new Date(departureAt).getTime() - Date.now()) / 1000)
       );
       setWaitCountdown(remaining);
     };
@@ -115,6 +135,25 @@ const Planner = () => {
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
   }, [waitSuggestion]);
+
+  useEffect(() => {
+    if (!journeyStarted || journeyCompleted || journeyTimerSec <= 0) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setJourneyTimerSec((prev) => {
+        if (prev <= 1) {
+          window.clearInterval(intervalId);
+          setJourneyCompleted(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [journeyStarted, journeyCompleted, journeyTimerSec]);
 
   const detectCurrentLocation = () => {
     if (!navigator.geolocation) return;
@@ -180,8 +219,10 @@ const Planner = () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/user/profile`);
       setWalletPoints(res.data?.wallet?.points ?? null);
+      setBakikartBalance(res.data?.wallet?.bakikart_balance ?? null);
     } catch {
       setWalletPoints(null);
+      setBakikartBalance(null);
     }
   };
 
@@ -211,6 +252,18 @@ const Planner = () => {
       setPendingPeakDecision(false);
       setDecisionMessage('');
       setWaitSuggestion(null);
+      setPaymentSteps([]);
+      setCurrentStepIndex(0);
+      setCurrentStepPaid(false);
+      setPaymentMessage('');
+      setLastQrCode('');
+      setJourneyTimerSec(0);
+      setJourneyStarted(false);
+      setJourneyCompleted(false);
+      setTotalPaidAmount(0);
+      setWaitedForBonus(false);
+      setActiveWaitSessionId(null);
+      setSelectedJourneyTime(time);
       if (useCurrentLocation && userLocation && res.data?.origin?.name) {
         setCurrentLocationLabel(`Current Location (${res.data.origin.name})`);
       }
@@ -226,6 +279,9 @@ const Planner = () => {
   const getRouteMeta = (route) => {
     const typeText = String(route.type || '').toLowerCase();
     const idText = String(route.id || '');
+    if (typeText.includes('no walk') || typeText.trim() === 'walk') {
+      return { mode: 'Walk', name: 'Walk', isMetro: false };
+    }
     const isMetro = typeText.includes('metro') || idText.toLowerCase().includes('metro');
 
     if (isMetro) {
@@ -272,23 +328,33 @@ const Planner = () => {
   const submitJourneyDecision = async (route, waited) => {
     setDecisionLoading(true);
     try {
-      const effectiveTime = waited ? addMinutesToTime(time, 15) : time;
+      const payloadStart = start === CURRENT_LOCATION_OPTION
+        ? (resolvedStops.origin?.name || 'Current Location')
+        : start;
+      const payloadEnd = end || resolvedStops.destination?.name || 'Destination';
+
       const res = await axios.post(`${API_BASE_URL}/journey/decision`, {
-        start,
-        end,
+        start: payloadStart,
+        end: payloadEnd,
         route,
-        selected_time: effectiveTime,
+        selected_time: selectedJourneyTime,
         waited,
         wait_minutes: 15,
-        wait_session_id: waited ? waitSuggestion?.session_id || null : null,
+        wait_session_id: waited ? activeWaitSessionId : null,
+        fare_paid: totalPaidAmount > 0,
+        paid_amount_azn: totalPaidAmount,
       });
 
       setWalletPoints(res.data?.wallet_points ?? walletPoints);
-      setDecisionMessage(res.data?.message || (waited ? 'Gözləmə qərarı qeydə alındı.' : 'Səfər başladı.'));
-      setTravelModeActive(true);
+      setBakikartBalance(res.data?.bakikart_balance ?? bakikartBalance);
+      setDecisionMessage(res.data?.message || 'Səfər tamamlandı.');
+      setTravelModeActive(false);
+      setJourneyStarted(false);
+      setJourneyCompleted(true);
       setPendingPeakDecision(false);
       setWaitSuggestion(null);
-      startTripTracking(route, effectiveTime);
+      stopTripTracking(true);
+      fetchProfile();
     } catch (err) {
       const msg = err?.response?.data?.detail || 'Qərar yaddaşa yazılmadı.';
       setDecisionMessage(msg);
@@ -340,7 +406,7 @@ const Planner = () => {
       return;
     }
 
-    submitJourneyDecision(route, false);
+    initializeJourneyFlow(route, time, false, null);
   };
 
   const addMinutesToTime = (hhmm, plusMinutes) => {
@@ -357,7 +423,119 @@ const Planner = () => {
     setSelectedRoute(null);
     setPendingPeakDecision(false);
     setWaitSuggestion(null);
+    setPaymentSteps([]);
+    setCurrentStepIndex(0);
+    setCurrentStepPaid(false);
+    setPaymentMessage('');
+    setLastQrCode('');
+    setJourneyStarted(false);
+    setJourneyCompleted(false);
+    setJourneyTimerSec(0);
+    setTotalPaidAmount(0);
+    setWaitedForBonus(false);
+    setActiveWaitSessionId(null);
     setDecisionMessage('Səyahət modu deaktiv edildi. Yeni route seçə bilərsiniz.');
+  };
+
+  const initializeJourneyFlow = (route, effectiveTime, waitedFlag, waitSessionId) => {
+    const segments = Array.isArray(route?.segments) ? route.segments : [];
+    const transitSegments = segments.filter((seg) => {
+      const mode = String(seg?.mode || '').toLowerCase();
+      return mode !== 'walk' && mode !== 'no walk';
+    });
+    const routeMeta = getRouteMeta(route);
+    const isMetroRoute = routeMeta.isMetro || String(route?.type || '').toLowerCase() === 'metro';
+
+    const defaultStep = {
+      mode: getRouteMeta(route).mode,
+      from: route.start,
+      to: route.end,
+      eta: route.eta,
+      cost: Number(route.cost || 0.6),
+      route_number: route.route_number || route.id || 'AUTO',
+      route_id: route.id,
+    };
+
+    const computedSteps = transitSegments.length
+      ? transitSegments.map((seg, index) => ({
+          mode: String(seg.mode || 'Transit'),
+          from: seg.from || route.start,
+          to: seg.to || route.end,
+          eta: Number(seg.eta || 5),
+          cost: Number(seg.cost || route.cost || 0.6),
+          route_number: seg.route_id || route.route_number || `STEP-${index + 1}`,
+          route_id: seg.route_id || route.id,
+          requires_payment: true,
+        }))
+      : [defaultStep];
+
+    // Metro route ümumi olaraq bir marşrut kimi hesablanır: stansiya dəyişsə də 1 dəfə ödəniş.
+    if (isMetroRoute) {
+      const totalEta = computedSteps.reduce((sum, step) => sum + Number(step.eta || 0), 0) || Number(route.eta || 1);
+      const metroUnifiedStep = {
+        mode: 'Metro',
+        from: route.start,
+        to: route.end,
+        eta: totalEta,
+        cost: Number(route.cost || computedSteps[0]?.cost || 0.6),
+        route_number: route.route_number || 'METRO',
+        route_id: route.id,
+        requires_payment: true,
+      };
+
+      setPaymentSteps([metroUnifiedStep]);
+      setCurrentStepIndex(0);
+      setCurrentStepPaid(false);
+      setPaymentMessage('Metro marşrutu üçün bir dəfə QR ödəniş edin.');
+      setLastQrCode('');
+      setJourneyStarted(false);
+      setJourneyCompleted(false);
+      setJourneyTimerSec(Math.max(60, Number(totalEta || 1) * 60));
+      setTotalPaidAmount(0);
+      setSelectedJourneyTime(effectiveTime);
+      setWaitedForBonus(waitedFlag);
+      setActiveWaitSessionId(waitSessionId);
+      setTravelModeActive(true);
+      setPendingPeakDecision(false);
+      startTripTracking(route, effectiveTime, 'WAITING', trackingSessionIdRef.current);
+      return;
+    }
+
+    // Metro daxilində ardıcıl seqmentlərdə yalnız ilk minişdə ödəniş tələb olunsun.
+    let metroPaidInSession = false;
+    const metroAwareSteps = computedSteps.map((step) => {
+      const mode = String(step.mode || '').toLowerCase();
+      const isMetroStep = mode.includes('metro');
+      if (!isMetroStep) {
+        metroPaidInSession = false;
+        return { ...step, requires_payment: true };
+      }
+      if (!metroPaidInSession) {
+        metroPaidInSession = true;
+        return { ...step, requires_payment: true };
+      }
+      return { ...step, requires_payment: false, cost: 0 };
+    });
+
+    setPaymentSteps(metroAwareSteps);
+    setCurrentStepIndex(0);
+    setCurrentStepPaid(!metroAwareSteps[0]?.requires_payment);
+    setPaymentMessage(
+      metroAwareSteps[0]?.requires_payment
+        ? 'QR ödəniş edin və trip başlasın.'
+        : 'Bu metro seqmenti üçün əlavə ödəniş tələb olunmur.'
+    );
+    setLastQrCode('');
+    setJourneyStarted(false);
+    setJourneyCompleted(false);
+    setJourneyTimerSec(Math.max(60, Number(metroAwareSteps[0]?.eta || route.eta || 1) * 60));
+    setTotalPaidAmount(0);
+    setSelectedJourneyTime(effectiveTime);
+    setWaitedForBonus(waitedFlag);
+    setActiveWaitSessionId(waitSessionId);
+    setTravelModeActive(true);
+    setPendingPeakDecision(false);
+    startTripTracking(route, effectiveTime, 'WAITING', trackingSessionIdRef.current);
   };
 
   const startTripTracking = (route, selectedTime, tripStatus = 'ACTIVE', forcedSessionId = null) => {
@@ -436,6 +614,122 @@ const Planner = () => {
     setTrackingStatus({ active: false, nearbyUsers: 0, densityScore: 0 });
   };
 
+  const generateQrCode = () => `QR-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+  const currentStep = paymentSteps[currentStepIndex] || null;
+  const hasNextStep = currentStepIndex < paymentSteps.length - 1;
+  const qrPixels = useMemo(() => {
+    const seed = lastQrCode || 'QR';
+    return Array.from({ length: 64 }).map((_, i) => {
+      const ch = seed.charCodeAt(i % seed.length) || 0;
+      return (ch + i) % 3 === 0;
+    });
+  }, [lastQrCode]);
+
+  const payForCurrentStep = async () => {
+    if (!selectedRoute || !currentStep) return;
+    if (!currentStep.requires_payment) {
+      setCurrentStepPaid(true);
+      setPaymentMessage('Bu seqment metro daxili keçiddir, əlavə ödəniş tələb olunmur.');
+      setJourneyStarted(true);
+      setJourneyCompleted(false);
+      setJourneyTimerSec(Math.max(60, Number(currentStep.eta || 1) * 60));
+      return;
+    }
+    setPaymentLoading(true);
+    setPaymentMessage('');
+
+    const qrCode = generateQrCode();
+    setLastQrCode(qrCode);
+    setPaymentMessage('Sample QR yaradıldı. Təsdiq üçün ödəniş yoxlanır...');
+    const coords = userLocation || {
+      lat: Number(resolvedStops.origin?.lat || BAKU_CENTER[0]),
+      lon: Number(resolvedStops.origin?.lon || BAKU_CENTER[1]),
+    };
+
+    try {
+      const payload = {
+        session_id: trackingSessionIdRef.current,
+        route_id: String(currentStep.route_id || selectedRoute.id || ''),
+        route_number: String(currentStep.route_number || selectedRoute.route_number || ''),
+        validator_stop: currentStep.from || selectedRoute.start,
+        lat: Number(coords.lat),
+        lon: Number(coords.lon),
+        amount_azn: Number(currentStep.cost || selectedRoute.cost || 0.6),
+        qr_code: qrCode,
+      };
+
+      const res = await axios.post(`${API_BASE_URL}/api/v1/payments/qr`, payload);
+      setCurrentStepPaid(true);
+      setTotalPaidAmount((prev) => prev + Number(payload.amount_azn || 0));
+      setBakikartBalance(res.data?.bakikart_balance ?? bakikartBalance);
+      setJourneyStarted(true);
+      setJourneyCompleted(false);
+      setJourneyTimerSec(Math.max(60, Number(currentStep.eta || 1) * 60));
+      startTripTracking(selectedRoute, selectedJourneyTime, 'ACTIVE', trackingSessionIdRef.current);
+      setPaymentMessage(
+        `QR payment confirmed for step ${currentStepIndex + 1}. ` +
+        (hasNextStep ? 'Transfer üçün növbəti step bitəndə davam edin.' : 'Trip başladı və countdown aktivdir.')
+      );
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'Ödəniş uğursuz oldu.';
+      setPaymentMessage(msg);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  const skipJourneyTimer = () => {
+    setJourneyTimerSec(0);
+    setJourneyCompleted(true);
+    setJourneyStarted(false);
+    setPaymentMessage('Bu step timer-i skip edildi.');
+  };
+
+  const proceedToNextStep = () => {
+    if (!hasNextStep) return;
+    const nextIndex = currentStepIndex + 1;
+    const nextStep = paymentSteps[nextIndex];
+    setCurrentStepIndex(nextIndex);
+    setCurrentStepPaid(!nextStep?.requires_payment);
+    setLastQrCode('');
+    setJourneyStarted(false);
+    setJourneyCompleted(false);
+    setJourneyTimerSec(Math.max(60, Number(nextStep?.eta || 1) * 60));
+    setPaymentMessage(
+      nextStep?.requires_payment
+        ? 'Növbəti step üçün QR ödəniş edin.'
+        : 'Metrodan çıxmadığınız üçün bu stepdə əlavə ödəniş tələb olunmur.'
+    );
+  };
+
+  const skipFirstStep = () => {
+    if (currentStepIndex !== 0 || paymentSteps.length < 2) return;
+    setCurrentStepIndex(1);
+    setCurrentStepPaid(false);
+    setJourneyStarted(false);
+    setJourneyCompleted(false);
+    setLastQrCode('');
+    const nextStep = paymentSteps[1];
+    setJourneyTimerSec(Math.max(60, Number(nextStep?.eta || 1) * 60));
+    setPaymentMessage('İlk step skip edildi. İlk marşrutdan düşüb növbəti marşrut üçün gözləyirsiniz.');
+  };
+
+  const completeJourneyAndClaim = () => {
+    submitJourneyDecision(selectedRoute, waitedForBonus);
+  };
+
+  const skipToEndDemo = async () => {
+    if (!currentStepPaid) {
+      setPaymentMessage('Əvvəlcə QR ödəniş təsdiqlənməlidir.');
+      return;
+    }
+    setJourneyTimerSec(0);
+    setJourneyCompleted(true);
+    setJourneyStarted(false);
+    await completeJourneyAndClaim();
+  };
+
   const normalizePoint = (point) => (
     Array.isArray(point) && point.length === 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))
       ? [Number(point[0]), Number(point[1])]
@@ -480,6 +774,7 @@ const Planner = () => {
   const nearestMetro = nearestTransit?.nearest_metro_station;
   const hasManualStart = start && start !== CURRENT_LOCATION_OPTION;
   const canSearch = !loading && end && (hasManualStart || (useCurrentLocation && userLocation));
+  const pilotZoneList = Object.values(locations || {}).slice(0, 6).map((item) => item.name);
 
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden">
@@ -557,6 +852,13 @@ const Planner = () => {
                <span className="font-bold">Peak Hour Warning</span><br />
                Metro lines M1 & M2 are currently at 95% capacity. AI suggests delaying departure by 15m for 40% less crowding.
              </p>
+          </div>
+
+          <div className="mt-4 p-4 bg-slate-900 text-white rounded-xl">
+            <p className="text-[10px] uppercase tracking-widest text-slate-300 font-bold">MVP Pilot Coverage</p>
+            <p className="text-xs mt-2 leading-relaxed text-slate-100">
+              Demo zone-lar: {pilotZoneList.length ? pilotZoneList.join(', ') : 'City core stops'}. Bu hackathon versiyası Bakı pilot zonalarında real-time route balancing ssenarisini göstərir.
+            </p>
           </div>
 
           <div className="mt-4 space-y-3">
@@ -754,7 +1056,8 @@ const Planner = () => {
         <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50/50">
           {walletPoints !== null && (
             <div className="p-3 rounded-xl bg-black text-white text-xs font-semibold">
-              Wallet Balance: {walletPoints} pts
+              Wallet: {walletPoints} pts
+              {bakikartBalance !== null ? ` • BakiKart: ${Number(bakikartBalance).toFixed(2)} AZN` : ''}
             </div>
           )}
 
@@ -762,6 +1065,99 @@ const Planner = () => {
             <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800">
               <p className="text-xs font-bold uppercase mb-1">Səyahət Modu Aktivdir</p>
               <p className="text-sm">Seçilmiş marşrut: {selectedRoute.start} → {selectedRoute.end}</p>
+              {currentStep && (
+                <div className="mt-3 p-3 rounded-lg bg-white border border-emerald-200 text-xs text-emerald-900 space-y-2">
+                  <p className="font-bold uppercase">Transfer Step {currentStepIndex + 1}/{paymentSteps.length}</p>
+                  <p>{currentStep.mode} • {currentStep.from} → {currentStep.to}</p>
+                  <p>Tarif: {Number(currentStep.cost || 0).toFixed(2)} AZN</p>
+                  <p>ETA: {Math.ceil(journeyTimerSec / 60)} dəq</p>
+                  <p className="text-[11px] font-bold text-emerald-700">
+                    Countdown: {String(Math.floor(journeyTimerSec / 60)).padStart(2, '0')}:{String(journeyTimerSec % 60).padStart(2, '0')}
+                  </p>
+                  {!currentStep.requires_payment && (
+                    <p className="text-[11px] font-semibold text-emerald-700">
+                      Metro daxilində olduğunuz üçün bu seqmentə görə yenidən ödəniş tələb olunmur.
+                    </p>
+                  )}
+
+                  {!currentStepPaid && (
+                    <button
+                      disabled={paymentLoading}
+                      onClick={payForCurrentStep}
+                      className="w-full bg-black text-white px-3 py-2 rounded-lg text-[11px] font-bold disabled:opacity-50 flex items-center justify-center gap-1"
+                    >
+                      <QrCode size={12} /> QR ilə ödə və tripi başlat
+                    </button>
+                  )}
+
+                  {lastQrCode && (
+                    <div className="rounded-lg bg-emerald-100 border border-emerald-200 px-3 py-2 text-[11px] font-semibold">
+                      <div className="flex items-start gap-3">
+                        <div className="w-12 h-12 bg-white border border-emerald-300 rounded grid grid-cols-8 overflow-hidden shrink-0">
+                          {qrPixels.map((isDark, idx) => (
+                            <span key={idx} className={isDark ? 'bg-black' : 'bg-white'} />
+                          ))}
+                        </div>
+                        <div className="break-all">
+                          <p className="font-bold">Sample QR</p>
+                          <p>{lastQrCode}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {paymentMessage && (
+                    <div className="rounded-lg bg-emerald-100 border border-emerald-200 px-3 py-2 text-[11px] font-semibold">
+                      {paymentMessage}
+                    </div>
+                  )}
+
+                  {currentStepPaid && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={skipJourneyTimer}
+                        className="bg-white border border-emerald-300 text-emerald-700 px-3 py-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1"
+                      >
+                        <SkipForward size={12} /> Skip Timer
+                      </button>
+                      <button
+                        onClick={skipToEndDemo}
+                        className="bg-black text-white px-3 py-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1"
+                      >
+                        <CheckCircle2 size={12} /> Demo Skip to End
+                      </button>
+                    </div>
+                  )}
+
+                  {currentStepIndex === 0 && paymentSteps.length > 1 && (
+                    <button
+                      onClick={skipFirstStep}
+                      className="w-full bg-orange-100 border border-orange-300 text-orange-700 px-3 py-2 rounded-lg text-[11px] font-bold"
+                    >
+                      Skip First Step (switch to next route)
+                    </button>
+                  )}
+
+                  {journeyCompleted && hasNextStep && (
+                    <button
+                      onClick={proceedToNextStep}
+                      className="w-full bg-black text-white px-3 py-2 rounded-lg text-[11px] font-bold"
+                    >
+                      Next Transfer Step
+                    </button>
+                  )}
+
+                  {journeyCompleted && !hasNextStep && (
+                    <button
+                      disabled={decisionLoading}
+                      onClick={completeJourneyAndClaim}
+                      className="w-full bg-black text-white px-3 py-2 rounded-lg text-[11px] font-bold disabled:opacity-50 flex items-center justify-center gap-1"
+                    >
+                      <CheckCircle2 size={12} /> Complete Journey & Claim Points
+                    </button>
+                  )}
+                </div>
+              )}
               {trackingStatus.active && (
                 <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
                   <div className="rounded-lg bg-white px-3 py-2 border border-emerald-200">
@@ -797,7 +1193,11 @@ const Planner = () => {
               <div className="flex gap-2">
                 <button
                   disabled={decisionLoading || waitCountdown > 0}
-                  onClick={() => submitJourneyDecision(selectedRoute, true)}
+                  onClick={() => {
+                    setWaitedForBonus(true);
+                    setActiveWaitSessionId(waitSuggestion?.session_id || activeWaitSessionId);
+                    initializeJourneyFlow(selectedRoute, addMinutesToTime(time, 15), true, waitSuggestion?.session_id || null);
+                  }}
                   className="bg-black text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
                 >
                   Gözləyirəm (+point)
@@ -806,11 +1206,25 @@ const Planner = () => {
                   disabled={decisionLoading}
                   onClick={() => {
                     setWaitSuggestion(null);
-                    submitJourneyDecision(selectedRoute, false);
+                    setWaitedForBonus(false);
+                    setActiveWaitSessionId(null);
+                    initializeJourneyFlow(selectedRoute, time, false, null);
                   }}
                   className="bg-white text-gray-700 border border-gray-300 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
                 >
                   İndi minirəm (0 point)
+                </button>
+                <button
+                  disabled={decisionLoading}
+                  onClick={() => {
+                    setWaitCountdown(0);
+                    setWaitedForBonus(true);
+                    setActiveWaitSessionId(waitSuggestion?.session_id || activeWaitSessionId);
+                    setPaymentMessage('Demo skip edildi, sanki gözlədiniz. İndi QR ilə minə bilərsiniz.');
+                  }}
+                  className="bg-white text-orange-700 border border-orange-300 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                >
+                  Wait skip
                 </button>
               </div>
             </div>

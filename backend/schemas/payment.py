@@ -3,7 +3,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 
-class NFCPaymentRequest(BaseModel):
+class PaymentRequestBase(BaseModel):
     session_id: str
     route_id: Optional[str] = None
     route_number: Optional[str] = None
@@ -11,6 +11,14 @@ class NFCPaymentRequest(BaseModel):
     lat: float
     lon: float
     amount_azn: float = 0.6
+
+
+class NFCPaymentRequest(PaymentRequestBase):
+    pass
+
+
+class QRPaymentRequest(PaymentRequestBase):
+    qr_code: str
 
 
 class NFCPaymentResponse(BaseModel):
@@ -21,3 +29,8 @@ class NFCPaymentResponse(BaseModel):
     matched_wait_session_id: Optional[str] = None
     matched_wait_minutes: Optional[int] = None
     boarding_status: str
+    bakikart_balance: float
+
+
+class QRPaymentResponse(NFCPaymentResponse):
+    qr_code: str
