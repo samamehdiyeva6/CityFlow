@@ -15,7 +15,7 @@ const Navbar = ({ currentPage, onNavigate, points, membershipTier, isSignedIn, o
         <div className="bg-black text-white p-1.5 rounded-lg">
           <Train size={24} />
         </div>
-        <span className="font-bold text-xl tracking-tight">BakuKart</span>
+        <span className="font-bold text-xl tracking-tight">CityFlow</span>
       </div>
 
       <div className="flex items-center gap-8">

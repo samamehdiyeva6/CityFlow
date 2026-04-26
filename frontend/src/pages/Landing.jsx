@@ -5,7 +5,7 @@ const Landing = ({ onStart }) => {
   const features = [
     { icon: <Zap size={20} />, title: "AI Route Planner", desc: "Dynamic pathfinding that considers current traffic, historical trends, and special events." },
     { icon: <Globe size={20} />, title: "Real-time Tracking", desc: "Live updates for every bus and metro line in the city. Know exactly when your ride is coming." },
-    { icon: <Award size={20} />, title: "Rewards Ecosystem", desc: "Earn BakuPoints for choosing off-peak times or eco-friendly routes. Redeem them for snacks or shopping." },
+    { icon: <Award size={20} />, title: "Rewards Ecosystem", desc: "Earn CityPoints for choosing off-peak times or eco-friendly routes. Redeem them for snacks or shopping." },
     { icon: <Eye size={20} />, title: "Crowd Transparency", desc: "View live 'busy-ness' scores for stations and carriages. Make informed choices for comfort." },
     { icon: <Link size={20} />, title: "Seamless Integration", desc: "Plan multi-modal trips combining Metro, Bus, and Walking in one unified interface." },
     { icon: <BarChart3 size={20} />, title: "Predictive Analytics", desc: "Plan your week ahead. Our AI predicts future congestion based on holiday schedules and weather." },
@@ -24,7 +24,7 @@ const Landing = ({ onStart }) => {
             Travel Smarter.<br />Avoid the Crowd.
           </h1>
           <p className="text-xl text-gray-500 max-w-lg">
-            BakuKart uses real-time AI to route you through the least congested paths. Save time, reduce stress, and earn rewards for travelling during off-peak hours.
+            CityFlow uses real-time AI to route you through the least congested paths. Save time, reduce stress, and earn rewards for travelling during off-peak hours.
           </p>
           <div className="flex gap-4">
             <button 
@@ -61,7 +61,7 @@ const Landing = ({ onStart }) => {
                 <Award size={16} className="text-yellow-400" />
                 <span className="text-xs font-bold">Points Earned!</span>
               </div>
-              <p className="text-[10px] text-gray-400">+50 BakuPoints for off-peak travel.</p>
+              <p className="text-[10px] text-gray-400">+50 CityPoints for off-peak travel.</p>
            </div>
            {/* Placeholder for Map Visual */}
            <div className="w-full h-full bg-slate-300 flex items-center justify-center">
@@ -94,7 +94,7 @@ const Landing = ({ onStart }) => {
         <div className="bg-black rounded-3xl p-16 text-white flex flex-col items-center text-center space-y-8">
            <h2 className="text-5xl font-bold max-w-2xl leading-tight">Be rewarded for helping the city breathe.</h2>
            <p className="text-gray-400 max-w-xl text-lg">
-             By choosing off-peak travel times suggested by our AI, you directly reduce peak-hour congestion for everyone. As a thank you, BakuKart awards you points for every "Green Trip."
+             By choosing off-peak travel times suggested by our AI, you directly reduce peak-hour congestion for everyone. As a thank you, CityFlow awards you points for every "Green Trip."
            </p>
            <div className="flex gap-4">
              <button className="bg-white text-black px-8 py-4 rounded-xl font-bold hover:bg-gray-100 transition-all">Explore Rewards</button>

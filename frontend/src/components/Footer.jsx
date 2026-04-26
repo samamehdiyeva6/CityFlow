@@ -10,7 +10,7 @@ const Footer = () => {
             <div className="bg-black text-white p-1.5 rounded-lg">
               <Train size={20} />
             </div>
-            <span className="font-bold text-lg tracking-tight">BakuKart</span>
+            <span className="font-bold text-lg tracking-tight">CityFlow</span>
           </div>
           <p className="text-sm text-gray-500 leading-relaxed">
             Bakı şəhəri üçün süni intellekt əsaslı nəqliyyat planlayıcısı. Sıxlıqdan qaçın, vaxtınıza qənaət edin və hər səfərdə mükafatlar qazanın.
@@ -40,7 +40,7 @@ const Footer = () => {
         <div>
           <h4 className="font-bold text-sm uppercase tracking-widest mb-6">Əlaqə</h4>
           <ul className="space-y-4 text-sm text-gray-500">
-            <li className="flex items-center gap-3"><Mail size={16} /> support@bakukart.az</li>
+            <li className="flex items-center gap-3"><Mail size={16} /> support@cityflow.az</li>
             <li className="flex items-center gap-3"><Phone size={16} /> *2024</li>
             <li className="flex items-center gap-3 leading-relaxed"><MapPin size={16} className="shrink-0" /> Bakı, Azərbaycan<br />Heydər Əliyev pr. 115</li>
           </ul>
@@ -48,7 +48,7 @@ const Footer = () => {
       </div>
 
       <div className="max-w-7xl mx-auto pt-8 border-t border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4 text-xs font-medium text-gray-400 uppercase tracking-widest">
-        <p>© 2024 BakuKart AI. Bütün hüquqlar qorunur.</p>
+        <p>© 2024 CityFlow AI. Bütün hüquqlar qorunur.</p>
         <div className="flex gap-8">
           <a href="#" className="hover:text-black transition-colors">Məxfilik Siyasəti</a>
           <a href="#" className="hover:text-black transition-colors">İstifadə Şərtləri</a>

@@ -38,7 +38,7 @@ class GeminiService:
         }
 
         prompt = f"""
-        Sən BakuKart tətbiqinin ağıllı nəqliyyat köməkçisisən. 
+        Sən CityFlow tətbiqinin ağıllı nəqliyyat köməkçisisən. 
         Aşağıdakı məlumatlara əsasən istifadəçi üçün ən yaxşı 3 marşrut təklifi hazırlamalısan.
         
         İstifadəçi {start_name} nöqtəsindən {end_name} nöqtəsinə saat {time_str}-da getmək istəyir.

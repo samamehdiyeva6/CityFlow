@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
+import QRCode from 'qrcode';
 import { Search, MapPin, Clock, Info, Zap, AlertTriangle, Train, QrCode, SkipForward, CheckCircle2 } from 'lucide-react';
 import { Circle, CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -86,6 +87,7 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
   const [paymentMessage, setPaymentMessage] = useState('');
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [lastQrCode, setLastQrCode] = useState('');
+  const [qrImageDataUrl, setQrImageDataUrl] = useState('');
   const [journeyTimerSec, setJourneyTimerSec] = useState(0);
   const [journeyStarted, setJourneyStarted] = useState(false);
   const [journeyCompleted, setJourneyCompleted] = useState(false);
@@ -150,6 +152,21 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
   }, [waitTargetAt]);
+
+  useEffect(() => {
+    if (!lastQrCode) {
+      setQrImageDataUrl('');
+      return;
+    }
+
+    QRCode.toDataURL(lastQrCode, {
+      width: 192,
+      margin: 1,
+      color: { dark: '#000000', light: '#ffffff' },
+    })
+      .then((url) => setQrImageDataUrl(url))
+      .catch(() => setQrImageDataUrl(''));
+  }, [lastQrCode]);
 
   useEffect(() => {
     if (!journeyStarted || journeyCompleted || journeyTimerSec <= 0) {
@@ -659,13 +676,6 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
 
   const currentStep = paymentSteps[currentStepIndex] || null;
   const hasNextStep = currentStepIndex < paymentSteps.length - 1;
-  const qrPixels = useMemo(() => {
-    const seed = lastQrCode || 'QR';
-    return Array.from({ length: 64 }).map((_, i) => {
-      const ch = seed.charCodeAt(i % seed.length) || 0;
-      return (ch + i) % 3 === 0;
-    });
-  }, [lastQrCode]);
 
   const payForCurrentStep = async () => {
     if (!selectedRoute || !currentStep) return;
@@ -682,7 +692,7 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
 
     const qrCode = generateQrCode();
     setLastQrCode(qrCode);
-    setPaymentMessage('Sample QR yaradıldı. Təsdiq üçün ödəniş yoxlanır...');
+    setPaymentMessage('QR kod yaradıldı. Təsdiq üçün ödəniş yoxlanır...');
     const coords = userLocation || {
       lat: Number(resolvedStops.origin?.lat || BAKU_CENTER[0]),
       lon: Number(resolvedStops.origin?.lon || BAKU_CENTER[1]),
@@ -846,8 +856,6 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
   const nearestMetro = nearestTransit?.nearest_metro_station;
   const hasManualStart = start && start !== CURRENT_LOCATION_OPTION;
   const canSearch = !loading && end && (hasManualStart || (useCurrentLocation && userLocation));
-  const pilotZoneList = Object.values(locations || {}).slice(0, 6).map((item) => item.name);
-
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden">
       {/* Left Sidebar - Form */}
@@ -926,13 +934,6 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
              </p>
           </div>
 
-          <div className="mt-4 p-4 bg-slate-900 text-white rounded-xl">
-            <p className="text-[10px] uppercase tracking-widest text-slate-300 font-bold">MVP Pilot Coverage</p>
-            <p className="text-xs mt-2 leading-relaxed text-slate-100">
-              Demo zone-lar: {pilotZoneList.length ? pilotZoneList.join(', ') : 'City core stops'}. Bu hackathon versiyası Bakı pilot zonalarında real-time route balancing ssenarisini göstərir.
-            </p>
-          </div>
-
           <div className="mt-4 space-y-3">
             <button
               onClick={() => {
@@ -944,12 +945,6 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
             >
               Use Current Location
             </button>
-
-            {useCurrentLocation && userLocation && (
-              <div className="p-3 bg-black text-white rounded-xl text-xs font-medium">
-                Current location aktivdir. Start nöqtəsi GPS-dən götürüləcək.
-              </div>
-            )}
 
             {(nearestBus || nearestMetro) && (
               <div className="space-y-3">
@@ -1165,13 +1160,15 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
                   {lastQrCode && (
                     <div className="rounded-lg bg-emerald-100 border border-emerald-200 px-3 py-2 text-[11px] font-semibold">
                       <div className="flex items-start gap-3">
-                        <div className="w-12 h-12 bg-white border border-emerald-300 rounded grid grid-cols-8 overflow-hidden shrink-0">
-                          {qrPixels.map((isDark, idx) => (
-                            <span key={idx} className={isDark ? 'bg-black' : 'bg-white'} />
-                          ))}
+                        <div className="w-16 h-16 bg-white border border-emerald-300 rounded p-1 shrink-0">
+                          {qrImageDataUrl ? (
+                            <img src={qrImageDataUrl} alt="Payment QR code" className="w-full h-full object-contain" />
+                          ) : (
+                            <div className="w-full h-full bg-gray-100 rounded" />
+                          )}
                         </div>
                         <div className="break-all">
-                          <p className="font-bold">Sample QR</p>
+                          <p className="font-bold">QR Code</p>
                           <p>{lastQrCode}</p>
                         </div>
                       </div>
@@ -1263,39 +1260,46 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
                 </div>
               )}
               <div className="flex gap-2">
-                <button
-                  disabled={decisionLoading || waitStarted}
-                  onClick={startWaitingCountdown}
-                  className="bg-black text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
-                >
-                  Gözləməyə başla (+point)
-                </button>
-                <button
-                  disabled={decisionLoading || !waitStarted || waitCountdown > 0}
-                  onClick={startBonusJourneyAfterWait}
-                  className="bg-black text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
-                >
-                  Marşruta min (+point)
-                </button>
-                <button
-                  disabled={decisionLoading}
-                  onClick={() => {
-                    setWaitSuggestion(null);
-                    setWaitedForBonus(false);
-                    setActiveWaitSessionId(null);
-                    initializeJourneyFlow(selectedRoute, time, false, null);
-                  }}
-                  className="bg-white text-gray-700 border border-gray-300 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
-                >
-                  İndi minirəm (0 point)
-                </button>
-                <button
-                  disabled={decisionLoading}
-                  onClick={skipWaitForDemo}
-                  className="bg-white text-orange-700 border border-orange-300 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
-                >
-                  Wait skip (demo)
-                </button>
+                {!waitStarted ? (
+                  <>
+                    <button
+                      disabled={decisionLoading}
+                      onClick={startWaitingCountdown}
+                      className="bg-black text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                    >
+                      Gözləyirəm (+point)
+                    </button>
+                    <button
+                      disabled={decisionLoading}
+                      onClick={() => {
+                        setWaitSuggestion(null);
+                        setWaitedForBonus(false);
+                        setActiveWaitSessionId(null);
+                        initializeJourneyFlow(selectedRoute, time, false, null);
+                      }}
+                      className="bg-white text-gray-700 border border-gray-300 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                    >
+                      İndi minirəm (0 point)
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      disabled={decisionLoading || (!waitSkippedDemo && waitCountdown > 0)}
+                      onClick={startBonusJourneyAfterWait}
+                      className="bg-black text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                    >
+                      Minirəm (+point)
+                    </button>
+                    <button
+                      disabled={decisionLoading || waitSkippedDemo}
+                      onClick={skipWaitForDemo}
+                      className="bg-white text-orange-700 border border-orange-300 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                    >
+                      Wait skip (demo)
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -1311,13 +1315,13 @@ const Planner = ({ signedInEmail, onProfileRefresh }) => {
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Resolved Stops</p>
               {resolvedStops.origin && (
                 <p className="text-xs text-gray-700">
-                  Start stop: <span className="font-semibold">{resolvedStops.origin.name}</span>
+                  Start: <span className="font-semibold">{resolvedStops.origin.name}</span>
                   {resolvedStops.origin.distance_meters ? ` (${Math.round(resolvedStops.origin.distance_meters)} m)` : ''}
                 </p>
               )}
               {resolvedStops.destination && (
                 <p className="text-xs text-gray-700">
-                  End stop: <span className="font-semibold">{resolvedStops.destination.name}</span>
+                  End: <span className="font-semibold">{resolvedStops.destination.name}</span>
                 </p>
               )}
             </div>

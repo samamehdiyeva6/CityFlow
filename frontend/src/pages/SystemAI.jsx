@@ -8,9 +8,9 @@ const SystemAI = () => {
         <div className="inline-flex items-center gap-2 bg-gray-100 px-3 py-1 rounded-full text-[10px] font-bold uppercase mb-4">
            Technical Specification
         </div>
-        <h1 className="text-5xl font-bold mb-6">The Intelligence Behind BakuKart</h1>
+        <h1 className="text-5xl font-bold mb-6">The Intelligence Behind CityFlow</h1>
         <p className="text-xl text-gray-500 max-w-2xl leading-relaxed">
-          BakuKart leverages a state-of-the-art AI stack to synchronize millions of commute paths. Our system predicts congestion 60 minutes in advance, enabling a smarter, rewards-driven transport network.
+          CityFlow leverages a state-of-the-art AI stack to synchronize millions of commute paths. Our system predicts congestion 60 minutes in advance, enabling a smarter, rewards-driven transport network.
         </p>
         
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mt-12">
@@ -66,7 +66,7 @@ const SystemAI = () => {
          <div className="flex-1 space-y-8">
             <h2 className="text-4xl font-bold leading-tight">24/7 Monitoring & Governance</h2>
             <p className="text-gray-400 text-lg">
-              Our operations team oversees system health via a dedicated monitoring gateway. We prioritize data privacy and algorithmic fairness, ensuring BakuKart serves every citizen equitably.
+              Our operations team oversees system health via a dedicated monitoring gateway. We prioritize data privacy and algorithmic fairness, ensuring CityFlow serves every citizen equitably.
             </p>
             <ul className="space-y-4">
                {[

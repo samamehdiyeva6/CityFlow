@@ -19,7 +19,7 @@ from services.waiting_bonus_service import waiting_bonus_service
 
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="BakuKart API")
+app = FastAPI(title="CityFlow API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -135,7 +135,7 @@ def startup_populate():
 
 @app.get("/")
 async def root():
-    return {"message": "BakuKart API is running"}
+    return {"message": "CityFlow API is running"}
 
 @app.get("/locations")
 async def get_locations():
