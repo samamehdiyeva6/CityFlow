@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "installCommand": "npm install --prefix frontend",
-  "buildCommand": "npm run build --prefix frontend",
-  "outputDirectory": "frontend/dist",
+  "installCommand": "if [ -f frontend/package.json ]; then npm install --prefix frontend; elif [ -f ../frontend/package.json ]; then npm install --prefix ../frontend; else echo 'frontend/package.json not found'; exit 1; fi",
+  "buildCommand": "if [ -f frontend/package.json ]; then npm run build --prefix frontend && rm -rf dist && cp -R frontend/dist dist; elif [ -f ../frontend/package.json ]; then npm run build --prefix ../frontend && rm -rf dist && cp -R ../frontend/dist dist; else echo 'frontend/package.json not found'; exit 1; fi",
+  "outputDirectory": "dist",
   "functions": {
     "backend/main.py": {
       "runtime": "python3.12",
