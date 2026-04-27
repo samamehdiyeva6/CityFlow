@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "installCommand": "npm install --prefix frontend",
+  "buildCommand": "npm run build --prefix frontend",
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "backend/main.py": {
+      "runtime": "python3.12",
+      "includeFiles": "data/**"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/favicon.ico",
+      "destination": "/favicon.svg"
+    },
+    {
+      "source": "/api/v1/(.*)",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/auth/(.*)",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/journey/(.*)",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/user/(.*)",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/locations",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/traffic",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/plan",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/coupons",
+      "destination": "/backend/main.py"
+    },
+    {
+      "source": "/coupons/(.*)",
+      "destination": "/backend/main.py"
+    }
+  ]
+}

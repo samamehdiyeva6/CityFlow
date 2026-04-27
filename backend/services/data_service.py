@@ -1,7 +1,26 @@
 import json
 import os
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+def _resolve_data_dir() -> str:
+    explicit_data_dir = os.getenv("DATA_DIR")
+    if explicit_data_dir:
+        return explicit_data_dir
+
+    # Support both repository-root deployments and backend-root deployments.
+    candidate_dirs = [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"),
+    ]
+
+    for candidate in candidate_dirs:
+        if os.path.isdir(candidate):
+            return candidate
+
+    checked = ", ".join(candidate_dirs)
+    raise FileNotFoundError(f"Data directory not found. Checked: {checked}")
+
+
+DATA_DIR = _resolve_data_dir()
 
 def load_json(filename):
     path = os.path.join(DATA_DIR, filename)
