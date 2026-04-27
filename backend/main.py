@@ -27,14 +27,31 @@ app = FastAPI(title="CityFlow API")
 
 load_dotenv()
 
-cors_origins_env = os.getenv("CORS_ORIGINS") or os.getenv("FRONTEND_ORIGIN") or ""
-cors_origins = ["*"]
-if cors_origins_env:
-    cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+def _resolve_cors_origins() -> list[str]:
+    env_value = (
+        os.getenv("CORS_ORIGINS")
+        or os.getenv("FRONTEND_ORIGIN")
+        or os.getenv("FRONTEND_URL")
+        or ""
+    )
+    if env_value:
+        return [origin.strip() for origin in env_value.split(",") if origin.strip()]
+
+    return [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ]
+
+
+cors_origins = _resolve_cors_origins()
+cors_origin_regex = os.getenv("CORS_ORIGIN_REGEX") or r"https://.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
