@@ -8,6 +8,12 @@ import os
 import uuid
 from datetime import timedelta
 from dotenv import load_dotenv
+from fastapi.responses import JSONResponse
+
+try:
+    from mangum import Mangum
+except Exception:
+    Mangum = None
 
 from controllers.location_controller import router as location_router
 from controllers.payment_controller import router as payment_router
@@ -236,6 +242,11 @@ def startup_populate():
 @app.get("/")
 async def root():
     return {"message": "CityFlow API is running"}
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return JSONResponse(status_code=204, content=None)
 
 @app.get("/locations")
 async def get_locations():
@@ -539,6 +550,9 @@ async def register(payload: RegisterRequest, db: Session = Depends(get_db)):
             },
         },
     }
+
+
+handler = Mangum(app) if Mangum is not None else None
 
 
 @app.post("/auth/login")

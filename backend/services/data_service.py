@@ -16,27 +16,32 @@ def _resolve_data_dir() -> str:
         if os.path.isdir(candidate):
             return candidate
 
-    checked = ", ".join(candidate_dirs)
-    raise FileNotFoundError(f"Data directory not found. Checked: {checked}")
+    return ""
 
 
 DATA_DIR = _resolve_data_dir()
 
 def load_json(filename):
+    if not DATA_DIR:
+        return {}
+
     path = os.path.join(DATA_DIR, filename)
+    if not os.path.exists(path):
+        return {}
+
     with open(path, "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 class DataService:
     def __init__(self):
         self.locations = load_json("locations.json")
-        self.metro = load_json("metro.json")
+        self.metro = load_json("metro.json") or {"stations": []}
         self.pricing = load_json("pricing.json")
         self.routes = load_json("routes.json")
         self.routes_core = load_json("routes_core.json")
         self.routes_express = load_json("routes_express.json")
         self.routes_suburbs = load_json("routes_suburbs.json")
-        self.traffic = load_json("traffic.json")
+        self.traffic = load_json("traffic.json") or {"rush_hours": []}
 
     def get_all_locations(self):
         return self.locations
