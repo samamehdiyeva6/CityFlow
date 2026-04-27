@@ -135,6 +135,4 @@ Boş saatlarda sistem istifadəçilərə:
 
 ---
 
-## 👨‍💻 Author
 
-Ümüd Ağayev
