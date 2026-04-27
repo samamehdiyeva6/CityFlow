@@ -5,7 +5,6 @@
   "outputDirectory": "dist",
   "functions": {
     "backend/main.py": {
-      "runtime": "@vercel/python",
       "includeFiles": "data/**"
     }
   },

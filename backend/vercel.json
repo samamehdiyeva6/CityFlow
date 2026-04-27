@@ -2,7 +2,6 @@
   "version": 2,
   "functions": {
     "main.py": {
-      "runtime": "@vercel/python",
       "includeFiles": "../data/**"
     }
   },
