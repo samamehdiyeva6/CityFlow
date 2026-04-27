@@ -4,7 +4,7 @@
   "buildCommand": "rm -rf dist && npm run build --prefix frontend && cp -R frontend/dist dist",
   "outputDirectory": "dist",
   "functions": {
-    "backend/main.py": {
+    "api/index.py": {
       "includeFiles": "data/**"
     }
   },
@@ -19,39 +19,39 @@
     },
     {
       "source": "/api/v1/(.*)",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/auth/(.*)",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/journey/(.*)",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/user/(.*)",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/locations",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/traffic",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/plan",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/coupons",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/coupons/(.*)",
-      "destination": "/backend/main.py"
+      "destination": "/api/index.py"
     }
   ]
 }

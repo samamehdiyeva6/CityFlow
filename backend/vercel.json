@@ -1,14 +1,14 @@
 {
   "version": 2,
   "functions": {
-    "main.py": {
+    "api/index.py": {
       "includeFiles": "../data/**"
     }
   },
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/main.py"
+      "destination": "/api/index.py"
     }
   ]
 }
