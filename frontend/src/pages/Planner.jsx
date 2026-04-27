@@ -4,9 +4,8 @@ import QRCode from 'qrcode';
 import { Search, MapPin, Clock, Info, Zap, AlertTriangle, Train, QrCode, SkipForward, CheckCircle2 } from 'lucide-react';
 import { Circle, CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
+import { API_BASE_URL } from '../config/api';
 import 'leaflet/dist/leaflet.css';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "" : "http://127.0.0.1:8000");
 const BAKU_CENTER = [40.4093, 49.8671];
 const DEFAULT_ZOOM = 12;
 const ROUTE_COLORS = ['#111111', '#7c3aed', '#f97316'];

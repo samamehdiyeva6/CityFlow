@@ -6,8 +6,7 @@ import espressoImage from '../../images/espresso-coffee-recipe04-500x375.webp';
 import costaImage from '../../images/images.jpeg';
 import scooterImage from '../../images/skuter-by-lxj-466-11-133-10-elektron-skuterlr-35573-39-K.jpg';
 import bikeImage from '../../images/velosiped.jpg';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "" : "http://127.0.0.1:8000");
+import { API_BASE_URL } from '../config/api';
 
 const Rewards = ({ profile, membershipTier, onRefreshProfile }) => {
   const [coupons, setCoupons] = useState([]);

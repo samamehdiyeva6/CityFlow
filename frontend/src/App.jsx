@@ -7,8 +7,7 @@ import SystemAI from './pages/SystemAI';
 import SignIn from './pages/SignIn';
 import { getMembershipTier } from './utils/membership';
 import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "" : "http://127.0.0.1:8000");
+import { API_BASE_URL } from './config/api';
 
 function App() {
   const [signedInEmail, setSignedInEmail] = useState(localStorage.getItem('signedInEmail') || '');
