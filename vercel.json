@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "installCommand": "uv pip install -r backend/requirements.txt && npm install --prefix frontend",
+  "installCommand": "npm install --prefix frontend",
   "buildCommand": "rm -rf dist && npm run build --prefix frontend && cp -R frontend/dist dist",
   "outputDirectory": "dist",
   "functions": {
